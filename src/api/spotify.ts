@@ -41,9 +41,9 @@ export type SpotifyUser = {
 export type SpotifyPlaylist = {
   id: string;
   name: string;
-  images: { url: string }[];
-  tracks: { total: number };
-  owner: { display_name: string | null; id: string };
+  images?: { url: string }[] | null;
+  tracks?: { total?: number } | null;
+  owner?: { display_name: string | null; id: string };
 };
 
 export type SpotifyTrackItem = {
@@ -63,7 +63,7 @@ export async function getMe(): Promise<SpotifyUser> {
 export async function getMyPlaylists(
   limit = 50,
   offset = 0
-): Promise<{ items: SpotifyPlaylist[]; total: number; next: string | null }> {
+): Promise<{ items: (SpotifyPlaylist | null)[]; total: number; next: string | null }> {
   return api(`/me/playlists?limit=${limit}&offset=${offset}`);
 }
 
@@ -73,10 +73,13 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
   let total = Infinity;
   while (offset < total) {
     const page = await getMyPlaylists(50, offset);
-    all.push(...page.items);
-    total = page.total;
-    offset += page.items.length;
-    if (!page.items.length) break;
+    const items = (page.items || []).filter(
+      (p): p is SpotifyPlaylist => !!p && !!p.id
+    );
+    all.push(...items);
+    total = typeof page.total === 'number' ? page.total : all.length;
+    offset += (page.items || []).length;
+    if (!(page.items || []).length) break;
   }
   return all;
 }
@@ -86,7 +89,11 @@ export async function getPlaylistTracks(
   limit = 50,
   offset = 0
 ): Promise<{ items: SpotifyTrackItem[]; total: number }> {
-  return api(
+  const page = await api<{ items?: SpotifyTrackItem[]; total?: number }>(
     `/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}&fields=total,items(track(id,name,duration_ms,artists(name),album(name,images)))`
   );
+  return {
+    items: page?.items || [],
+    total: typeof page?.total === 'number' ? page.total : page?.items?.length || 0,
+  };
 }

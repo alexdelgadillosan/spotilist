@@ -68,6 +68,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
   listEl.innerHTML = playlists
     .map((p) => {
       const img = p.images?.[0]?.url;
+      const total = p.tracks?.total ?? 0;
       return `
       <button type="button" class="playlist-item" data-id="${p.id}">
         ${
@@ -76,8 +77,8 @@ export async function renderApp(root: HTMLElement): Promise<void> {
             : `<span class="playlist-art placeholder"></span>`
         }
         <span class="playlist-meta">
-          <span class="playlist-name">${escapeHtml(p.name)}</span>
-          <span class="playlist-count">${p.tracks.total} tracks</span>
+          <span class="playlist-name">${escapeHtml(p.name || 'Untitled')}</span>
+          <span class="playlist-count">${total} tracks</span>
         </span>
       </button>`;
     })
@@ -90,7 +91,8 @@ export async function renderApp(root: HTMLElement): Promise<void> {
         .forEach((el) => el.classList.remove('active'));
       btn.classList.add('active');
       const id = btn.dataset.id!;
-      const pl = playlists.find((p) => p.id === id)!;
+      const pl = playlists.find((p) => p.id === id);
+      if (!pl) return;
       void loadTracks(root, pl);
     });
   });
@@ -98,31 +100,32 @@ export async function renderApp(root: HTMLElement): Promise<void> {
 
 async function loadTracks(root: HTMLElement, playlist: SpotifyPlaylist) {
   const pane = root.querySelector('#track-pane')!;
-  pane.innerHTML = `<h2>${escapeHtml(playlist.name)}</h2><p class="muted">Loading tracks…</p>`;
+  pane.innerHTML = `<h2>${escapeHtml(playlist.name || 'Playlist')}</h2><p class="muted">Loading tracks…</p>`;
 
   try {
     const page = await getPlaylistTracks(playlist.id, 100, 0);
-    const rows = page.items
-      .filter((i) => i.track)
+    const rows = (page.items || [])
+      .filter((i) => i?.track)
       .map((i, idx) => {
         const t = i.track!;
-        const artists = t.artists.map((a) => a.name).join(', ');
+        const artists = (t.artists || []).map((a) => a.name).join(', ');
         return `
         <tr>
           <td class="num">${idx + 1}</td>
           <td>
-            <div class="track-title">${escapeHtml(t.name)}</div>
+            <div class="track-title">${escapeHtml(t.name || 'Unknown')}</div>
             <div class="track-artist">${escapeHtml(artists)}</div>
           </td>
-          <td class="dur">${formatDuration(t.duration_ms)}</td>
+          <td class="dur">${formatDuration(t.duration_ms || 0)}</td>
         </tr>`;
       })
       .join('');
 
+    const total = page.total ?? 0;
     pane.innerHTML = `
       <div class="track-header">
-        <h2>${escapeHtml(playlist.name)}</h2>
-        <p class="muted">${page.total} tracks${page.total > 100 ? ' (showing first 100)' : ''}</p>
+        <h2>${escapeHtml(playlist.name || 'Playlist')}</h2>
+        <p class="muted">${total} tracks${total > 100 ? ' (showing first 100)' : ''}</p>
       </div>
       <table class="track-table">
         <thead><tr><th>#</th><th>Title</th><th>Time</th></tr></thead>
