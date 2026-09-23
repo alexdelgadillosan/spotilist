@@ -9,9 +9,88 @@ const features = [
   'Import & export one or many playlists as JSON or CSV',
 ];
 
+const tourPins = [
+  {
+    id: '1',
+    left: '4%',
+    top: '16%',
+    side: 'right',
+    label: 'Search playlists',
+  },
+  {
+    id: '2',
+    left: '3%',
+    top: '24%',
+    side: 'right',
+    label: 'Merge · Dedupe · Export · Import · Delete',
+  },
+  {
+    id: '3',
+    left: '2%',
+    top: '42%',
+    side: 'right',
+    label: 'Check playlists for bulk actions',
+  },
+  {
+    id: '4',
+    left: '48%',
+    top: '10%',
+    side: 'left',
+    label: 'Rename · Delete playlist',
+  },
+  {
+    id: '5',
+    left: '55%',
+    top: '22%',
+    side: 'left',
+    label: 'Filter tracks · New from filter',
+  },
+  {
+    id: '6',
+    left: '34%',
+    top: '38%',
+    side: 'right',
+    label: 'Select tracks → Copy / Move / Delete',
+  },
+];
+
+const tourLegend = [
+  {
+    n: '1',
+    title: 'Search',
+    text: 'Filter your playlist list by name.',
+  },
+  {
+    n: '2',
+    title: 'Sidebar buttons',
+    text: 'Merge checked lists, Dedupe the open one, Export/Import JSON·CSV, Delete checked playlists.',
+  },
+  {
+    n: '3',
+    title: 'Playlist checkboxes',
+    text: 'Pick one or more playlists for Merge, Export, or Delete.',
+  },
+  {
+    n: '4',
+    title: 'Pencil & trash',
+    text: 'Rename (blue) or remove the open playlist from your library (red).',
+  },
+  {
+    n: '5',
+    title: 'Filters',
+    text: 'Narrow by title/artist/album, duration, date, explicit — then New from filter.',
+  },
+  {
+    n: '6',
+    title: 'Track checkboxes',
+    text: 'Multi-select songs for Copy to, Move to, New playlist, or Delete.',
+  },
+];
+
 export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
   const clientId = getClientId();
   const canConnect = Boolean(clientId);
+  const tourImg = `${import.meta.env.BASE_URL}app-tour.jpg`;
 
   root.innerHTML = `
   <div class="page">
@@ -50,6 +129,36 @@ export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
 
     <section class="panel">
       <h2>What you can do</h2>
+
+      <figure class="tour-guide">
+        <div class="tour-stage">
+          <img src="${tourImg}" alt="Spotilist app: playlists sidebar and track list" width="1024" height="519" loading="lazy" />
+          ${tourPins
+            .map(
+              (p) => `
+            <div class="tour-pin side-${p.side}" style="left:${p.left};top:${p.top}">
+              <span class="tour-dot" aria-hidden="true">${p.id}</span>
+              <span class="tour-arrow" aria-hidden="true"></span>
+              <span class="tour-chip">${escapeHtml(p.label)}</span>
+            </div>`
+            )
+            .join('')}
+        </div>
+        <figcaption class="tour-legend">
+          <ol>
+            ${tourLegend
+              .map(
+                (item) => `
+              <li>
+                <span class="tour-n">${item.n}</span>
+                <span><strong>${escapeHtml(item.title)}</strong> — ${escapeHtml(item.text)}</span>
+              </li>`
+              )
+              .join('')}
+          </ol>
+        </figcaption>
+      </figure>
+
       <ul class="features">
         ${features.map((f) => `<li>${f}</li>`).join('')}
       </ul>
