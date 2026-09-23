@@ -1,47 +1,41 @@
 import './style.css';
+import { getAccessToken, handleAuthCallback, isLoggedIn } from './auth/spotify-auth';
+import { renderLanding } from './views/landing';
+import { renderApp } from './views/app';
 
-const features = [
-  'Multi-select tracks across playlists',
-  'Bulk add, move, or delete',
-  'Merge playlists + auto-dedupe',
-  'Build new lists from genres & filters',
-  'Diff, smart mix, archive & export (next)',
-];
+const root = document.querySelector<HTMLDivElement>('#app')!;
 
-document.querySelector<HTMLDivElement>('#app')!.innerHTML = `
-  <div class="page">
-    <header class="top">
-      <div class="brand">
-        <span class="logo" aria-hidden="true"></span>
-        <span class="name">Spotilist</span>
-      </div>
-      <a class="ghost" href="https://github.com/alexdelgadillosan/spotilist" target="_blank" rel="noopener">GitHub</a>
-    </header>
+async function boot() {
+  try {
+    const handled = await handleAuthCallback();
+    if (handled) {
+      await renderApp(root);
+      return;
+    }
+  } catch (e) {
+    renderLanding(root, {
+      error: e instanceof Error ? e.message : String(e),
+    });
+    return;
+  }
 
-    <main class="hero">
-      <p class="eyebrow">Spotify playlist organizer</p>
-      <h1>Bulk-edit playlists the way Spotify should have.</h1>
-      <p class="lede">
-        Connect your account, multi-select tracks, merge lists, dedupe, and
-        spin up new playlists from genres — without the manual pain.
-      </p>
-      <div class="actions">
-        <button type="button" class="btn primary" id="connect" disabled title="OAuth coming next">
-          Connect Spotify
-        </button>
-        <span class="soon">OAuth &amp; live ops shipping next</span>
-      </div>
-    </main>
+  if (isLoggedIn()) {
+    try {
+      // Validate / refresh token before showing app
+      const token = await getAccessToken();
+      if (token) {
+        await renderApp(root);
+        return;
+      }
+    } catch (e) {
+      renderLanding(root, {
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return;
+    }
+  }
 
-    <section class="panel">
-      <h2>What you can do</h2>
-      <ul class="features">
-        ${features.map((f) => `<li>${f}</li>`).join('')}
-      </ul>
-    </section>
+  renderLanding(root);
+}
 
-    <footer class="foot">
-      <span>Dark UI · Spotify green · Built for power users</span>
-    </footer>
-  </div>
-`;
+void boot();

@@ -2,27 +2,41 @@
 
 Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and genre-based mixes.
 
-**Live (GitHub Pages):** https://alexdelgadillosan.github.io/spotilist/
+**Live:** https://alexdelgadillosan.github.io/spotilist/
 
-## Status
+## What works now
 
-Landing is live. Spotify OAuth + playlist ops are next.
+- **Connect Spotify** via OAuth **Authorization Code + PKCE** (safe for GitHub Pages)
+- List your playlists and browse tracks
+- Log out
 
-## Planned
+Bulk edit / merge / genre mix come next.
 
-- Spotify OAuth (connect your account)
-- Multi-select add / move / delete
-- Merge playlists + dedupe
-- Create playlists from genre filters
-- Spotify-inspired dark UI (`#121212` / `#1DB954`)
+## One-time Spotify setup
 
-## Local
+1. Create an app at [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard)
+2. Add **Redirect URIs** (exact):
+   - `http://localhost:5173/`
+   - `https://alexdelgadillosan.github.io/spotilist/`
+3. Copy the **Client ID**
+
+### Local
 
 ```bash
+cp .env.example .env
+# set VITE_SPOTIFY_CLIENT_ID=your_client_id
 npm install
 npm run dev
 ```
 
+### GitHub Pages
+
+Add repository secret **`VITE_SPOTIFY_CLIENT_ID`** (Settings → Secrets and variables → Actions), then push or re-run the deploy workflow.
+
+## Scopes requested
+
+`playlist-read-private`, `playlist-modify-public`, `playlist-modify-private`, `user-library-read`, `user-read-email`
+
 ## Stack
 
-Vite · TypeScript · (Next: Spotify Web API + OAuth)
+Vite · TypeScript · Spotify Web API (PKCE)
