@@ -1,8 +1,12 @@
-# Spotlist
+# Spotilist
 
 Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and genre-based mixes.
 
-**Status:** Scaffold — app coming soon.
+**Live (GitHub Pages):** https://alexdelgadillosan.github.io/spotilist/
+
+## Status
+
+Landing is live. Spotify OAuth + playlist ops are next.
 
 ## Planned
 
@@ -12,6 +16,13 @@ Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and genre-based
 - Create playlists from genre filters
 - Spotify-inspired dark UI (`#121212` / `#1DB954`)
 
-## Stack (target)
+## Local
 
-Next.js · TypeScript · Spotify Web API · Vercel
+```bash
+npm install
+npm run dev
+```
+
+## Stack
+
+Vite · TypeScript · (Next: Spotify Web API + OAuth)
