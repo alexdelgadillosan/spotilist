@@ -1,7 +1,7 @@
 import type { SpotifyTrackItem } from '../api/spotify';
 import { trackUri } from './playlist-ops';
 
-export const EXPORT_VERSION = 1 as const;
+export const EXPORT_VERSION = 2 as const;
 
 export type ExportTrack = {
   uri: string;
@@ -12,16 +12,34 @@ export type ExportTrack = {
   added_at: string;
 };
 
-export type SpotilistExport = {
-  version: typeof EXPORT_VERSION;
+export type ExportPlaylist = {
+  id: string;
+  name: string;
+  tracks: ExportTrack[];
+};
+
+/** Current multi-playlist export format. */
+export type SpotilistExportV2 = {
+  version: 2;
+  exportedAt: string;
+  playlists: ExportPlaylist[];
+};
+
+/** Legacy single-playlist export (still accepted on import). */
+export type SpotilistExportV1 = {
+  version: 1;
   exportedAt: string;
   source: { id: string; name: string };
   tracks: ExportTrack[];
 };
 
-export type ImportParseResult = {
-  nameHint: string;
+export type ImportPlaylistBundle = {
+  name: string;
   uris: string[];
+};
+
+export type ImportParseResult = {
+  playlists: ImportPlaylistBundle[];
   skipped: number;
   errors: string[];
 };
@@ -98,43 +116,6 @@ function itemsToExportTracks(items: SpotifyTrackItem[]): ExportTrack[] {
   return out;
 }
 
-export function buildExport(
-  source: { id: string; name: string },
-  items: SpotifyTrackItem[]
-): { json: string; csv: string; filenameBase: string; trackCount: number } {
-  const tracks = itemsToExportTracks(items);
-  const payload: SpotilistExport = {
-    version: EXPORT_VERSION,
-    exportedAt: new Date().toISOString(),
-    source: { id: source.id, name: source.name },
-    tracks,
-  };
-
-  const header = 'uri,name,artists,album,duration_ms,added_at';
-  const rows = tracks.map((t) =>
-    [
-      t.uri,
-      t.name,
-      t.artists,
-      t.album,
-      String(t.duration_ms),
-      t.added_at,
-    ]
-      .map(csvEscape)
-      .join(',')
-  );
-  const csv = [header, ...rows].join('\n') + '\n';
-  const date = payload.exportedAt.slice(0, 10);
-  const filenameBase = `spotilist-${slugify(source.name)}-${date}`;
-
-  return {
-    json: JSON.stringify(payload, null, 2),
-    csv,
-    filenameBase,
-    trackCount: tracks.length,
-  };
-}
-
 function dedupeUris(uris: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -151,33 +132,82 @@ function nameHintFromFilename(filename: string): string {
   return base.replace(/-\d{4}-\d{2}-\d{2}$/, '').replace(/-/g, ' ').trim() || 'Imported playlist';
 }
 
-function parseJsonImport(text: string, filename: string): ImportParseResult {
-  const errors: string[] = [];
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return {
-      nameHint: nameHintFromFilename(filename),
-      uris: [],
-      skipped: 0,
-      errors: ['Invalid JSON file.'],
-    };
+export function buildMultiExport(
+  sources: Array<{ id: string; name: string; items: SpotifyTrackItem[] }>
+): {
+  json: string;
+  csv: string;
+  filenameBase: string;
+  playlistCount: number;
+  trackCount: number;
+} {
+  const playlists: ExportPlaylist[] = sources.map((s) => ({
+    id: s.id,
+    name: s.name,
+    tracks: itemsToExportTracks(s.items),
+  }));
+
+  const payload: SpotilistExportV2 = {
+    version: EXPORT_VERSION,
+    exportedAt: new Date().toISOString(),
+    playlists,
+  };
+
+  const header = 'playlist,uri,name,artists,album,duration_ms,added_at';
+  const rows: string[] = [];
+  let trackCount = 0;
+  for (const pl of playlists) {
+    for (const t of pl.tracks) {
+      trackCount += 1;
+      rows.push(
+        [
+          pl.name,
+          t.uri,
+          t.name,
+          t.artists,
+          t.album,
+          String(t.duration_ms),
+          t.added_at,
+        ]
+          .map(csvEscape)
+          .join(',')
+      );
+    }
   }
+  const csv = [header, ...rows].join('\n') + '\n';
+  const date = payload.exportedAt.slice(0, 10);
+  const filenameBase =
+    playlists.length === 1
+      ? `spotilist-${slugify(playlists[0].name)}-${date}`
+      : `spotilist-${playlists.length}-playlists-${date}`;
 
-  const obj = data as Partial<SpotilistExport> & { tracks?: unknown };
-  const nameHint =
-    (obj.source && typeof obj.source === 'object' && typeof obj.source.name === 'string'
-      ? obj.source.name
-      : '') || nameHintFromFilename(filename);
+  return {
+    json: JSON.stringify(payload, null, 2),
+    csv,
+    filenameBase,
+    playlistCount: playlists.length,
+    trackCount,
+  };
+}
 
-  if (!Array.isArray(obj.tracks)) {
-    return { nameHint, uris: [], skipped: 0, errors: ['JSON missing tracks array.'] };
-  }
+/** Single-playlist helper (wraps buildMultiExport). */
+export function buildExport(
+  source: { id: string; name: string },
+  items: SpotifyTrackItem[]
+): {
+  json: string;
+  csv: string;
+  filenameBase: string;
+  playlistCount: number;
+  trackCount: number;
+} {
+  return buildMultiExport([{ ...source, items }]);
+}
 
+function tracksFromUnknown(rows: unknown[]): { uris: string[]; skipped: number } {
   const raw: string[] = [];
   let skipped = 0;
-  for (const row of obj.tracks) {
+  for (const row of rows) {
     const uri =
       row && typeof row === 'object' && typeof (row as ExportTrack).uri === 'string'
         ? (row as ExportTrack).uri.trim()
@@ -185,12 +215,72 @@ function parseJsonImport(text: string, filename: string): ImportParseResult {
     if (uri && isValidSpotifyUri(uri)) raw.push(uri);
     else skipped += 1;
   }
+  return { uris: dedupeUris(raw), skipped };
+}
 
-  if (obj.version != null && obj.version !== EXPORT_VERSION) {
-    errors.push(`Unrecognized export version ${String(obj.version)}; importing URIs anyway.`);
+function parseJsonImport(text: string, filename: string): ImportParseResult {
+  const errors: string[] = [];
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return {
+      playlists: [],
+      skipped: 0,
+      errors: ['Invalid JSON file.'],
+    };
   }
 
-  return { nameHint, uris: dedupeUris(raw), skipped, errors };
+  const obj = data as Record<string, unknown>;
+
+  // v2 multi-playlist
+  if (Array.isArray(obj.playlists)) {
+    const playlists: ImportPlaylistBundle[] = [];
+    let skipped = 0;
+    for (const entry of obj.playlists) {
+      if (!entry || typeof entry !== 'object') {
+        skipped += 1;
+        continue;
+      }
+      const pl = entry as { name?: unknown; tracks?: unknown };
+      const name =
+        typeof pl.name === 'string' && pl.name.trim()
+          ? pl.name.trim()
+          : nameHintFromFilename(filename);
+      if (!Array.isArray(pl.tracks)) {
+        errors.push(`Playlist “${name}” missing tracks array.`);
+        continue;
+      }
+      const { uris, skipped: s } = tracksFromUnknown(pl.tracks);
+      skipped += s;
+      if (uris.length) playlists.push({ name, uris });
+    }
+    if (obj.version != null && obj.version !== 1 && obj.version !== 2) {
+      errors.push(`Unrecognized export version ${String(obj.version)}; importing URIs anyway.`);
+    }
+    return { playlists, skipped, errors };
+  }
+
+  // v1 single playlist
+  const source = obj.source as { name?: string } | undefined;
+  const nameHint =
+    (source && typeof source.name === 'string' ? source.name : '') ||
+    nameHintFromFilename(filename);
+
+  if (!Array.isArray(obj.tracks)) {
+    return {
+      playlists: [],
+      skipped: 0,
+      errors: ['JSON missing playlists or tracks array.'],
+    };
+  }
+
+  const { uris, skipped } = tracksFromUnknown(obj.tracks);
+  return {
+    playlists: uris.length ? [{ name: nameHint, uris }] : [],
+    skipped,
+    errors,
+  };
 }
 
 function parseCsvImport(text: string, filename: string): ImportParseResult {
@@ -200,8 +290,7 @@ function parseCsvImport(text: string, filename: string): ImportParseResult {
     .filter((l) => l.trim().length > 0);
   if (!lines.length) {
     return {
-      nameHint: nameHintFromFilename(filename),
-      uris: [],
+      playlists: [],
       skipped: 0,
       errors: ['CSV file is empty.'],
     };
@@ -209,27 +298,38 @@ function parseCsvImport(text: string, filename: string): ImportParseResult {
 
   const headerCells = parseCsvLine(lines[0]).map((c) => c.trim().toLowerCase());
   let uriIdx = headerCells.indexOf('uri');
+  const playlistIdx = headerCells.indexOf('playlist');
   const start = uriIdx >= 0 ? 1 : 0;
   if (uriIdx < 0) {
-    // No header — assume first column is uri
-    uriIdx = 0;
+    uriIdx = playlistIdx >= 0 ? 1 : 0;
   }
 
-  const raw: string[] = [];
+  const byName = new Map<string, string[]>();
   let skipped = 0;
+  const defaultName = nameHintFromFilename(filename);
+
   for (let i = start; i < lines.length; i++) {
     const cells = parseCsvLine(lines[i]);
     const uri = (cells[uriIdx] || '').trim();
-    if (uri && isValidSpotifyUri(uri)) raw.push(uri);
-    else skipped += 1;
+    if (!uri || !isValidSpotifyUri(uri)) {
+      skipped += 1;
+      continue;
+    }
+    const plName =
+      playlistIdx >= 0
+        ? (cells[playlistIdx] || '').trim() || defaultName
+        : defaultName;
+    const list = byName.get(plName) || [];
+    list.push(uri);
+    byName.set(plName, list);
   }
 
-  return {
-    nameHint: nameHintFromFilename(filename),
-    uris: dedupeUris(raw),
-    skipped,
-    errors: [],
-  };
+  const playlists: ImportPlaylistBundle[] = [...byName.entries()].map(([name, uris]) => ({
+    name,
+    uris: dedupeUris(uris),
+  }));
+
+  return { playlists, skipped, errors: [] };
 }
 
 export function parseImportFile(text: string, filename: string): ImportParseResult {

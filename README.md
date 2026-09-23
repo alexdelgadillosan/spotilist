@@ -13,7 +13,7 @@ Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and filter-base
 - **Merge** playlists with dry-run preview + auto-dedupe
 - **Dedupe** the active playlist
 - Filter by title/artist/album, duration, date added, explicit
-- **Import / export** playlists as JSON + CSV (backup & restore)
+- **Import / export** one or many playlists as JSON + CSV (checkboxes for multi-export)
 - Unavailable catalog items surfaced clearly
 
 ## One-time Spotify setup

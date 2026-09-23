@@ -30,7 +30,7 @@ import {
   urisFromItems,
   type TrackFilter,
 } from '../ops/playlist-ops';
-import { buildExport, downloadText, parseImportFile } from '../ops/transfer';
+import { buildMultiExport, downloadText, parseImportFile } from '../ops/transfer';
 import {
   clearSelection,
   deselectMany,
@@ -45,6 +45,7 @@ import {
 import {
   confirmModal,
   escapeHtml,
+  importPlaylistsModal,
   mergeModal,
   newPlaylistModal,
   pickPlaylistModal,
@@ -257,7 +258,7 @@ function renderPlaylistList(ctx: AppCtx): void {
       const checked = ctx.mergeChecked.has(p.id) ? 'checked' : '';
       return `
       <div class="playlist-row ${active} ${liked ? 'liked-songs' : ''}" data-id="${p.id}">
-        <label class="merge-check" title="${liked ? 'Include Liked Songs in merge' : 'Select for merge'}">
+        <label class="merge-check" title="${liked ? 'Include Liked Songs in merge / export' : 'Select for merge / export'}">
           <input type="checkbox" data-merge="${p.id}" ${checked} />
         </label>
         <button type="button" class="playlist-item" data-id="${p.id}">
@@ -308,7 +309,8 @@ function updateSidebarActions(ctx: AppCtx): void {
   mergeBtn.disabled = ctx.mergeChecked.size < 2;
   // Dedupe only applies to real playlists (Liked Songs isn't editable that way)
   dedupeBtn.disabled = !ctx.activeId || isLikedSongs(ctx.activeId);
-  exportBtn.disabled = !ctx.activeId || ctx.activeItems.length === 0;
+  exportBtn.disabled =
+    ctx.mergeChecked.size < 1 && (!ctx.activeId || ctx.activeItems.length === 0);
 }
 
 async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void> {
@@ -818,36 +820,58 @@ function selectionAsExportItems(): SpotifyTrackItem[] {
 }
 
 async function runExport(ctx: AppCtx): Promise<void> {
-  const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
-  if (!pl) {
-    toast('Select a playlist first', 'error');
-    return;
+  type SourceBundle = { id: string; name: string; items: SpotifyTrackItem[] };
+  const sources: SourceBundle[] = [];
+
+  try {
+    if (ctx.mergeChecked.size >= 1) {
+      toast('Loading playlists to export…');
+      for (const id of ctx.mergeChecked) {
+        const pl = ctx.playlists.find((p) => p.id === id);
+        if (!pl) continue;
+        const { items } =
+          isLikedSongs(pl)
+            ? await getAllLikedSongs()
+            : await getAllPlaylistItems(pl.id);
+        sources.push({ id: pl.id, name: pl.name || 'Playlist', items });
+      }
+    } else {
+      const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
+      if (!pl) {
+        toast('Select or check playlists to export', 'error');
+        return;
+      }
+      const fromSelection = getSelectionCount() > 0;
+      const items = fromSelection
+        ? selectionAsExportItems()
+        : applyTrackFilter(ctx.activeItems, ctx.filter);
+      if (!items.length) {
+        toast('Nothing to export', 'error');
+        return;
+      }
+      const sourceName = fromSelection ? `${pl.name} (selection)` : pl.name;
+      sources.push({ id: pl.id, name: sourceName || 'Playlist', items });
+    }
+
+    if (!sources.length) {
+      toast('Select or check playlists to export', 'error');
+      return;
+    }
+
+    const built = buildMultiExport(sources);
+    if (!built.trackCount) {
+      toast('No tracks with Spotify URIs to export', 'error');
+      return;
+    }
+
+    downloadText(`${built.filenameBase}.json`, built.json, 'application/json');
+    downloadText(`${built.filenameBase}.csv`, built.csv, 'text/csv;charset=utf-8');
+    toast(
+      `Exported ${built.playlistCount} playlist${built.playlistCount === 1 ? '' : 's'} · ${built.trackCount} track${built.trackCount === 1 ? '' : 's'} (JSON + CSV)`
+    );
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e), 'error');
   }
-
-  const fromSelection = getSelectionCount() > 0;
-  const items = fromSelection
-    ? selectionAsExportItems()
-    : applyTrackFilter(ctx.activeItems, ctx.filter);
-
-  if (!items.length) {
-    toast('Nothing to export', 'error');
-    return;
-  }
-
-  const sourceName = fromSelection
-    ? `${pl.name} (selection)`
-    : pl.name;
-  const built = buildExport({ id: pl.id, name: sourceName }, items);
-  if (!built.trackCount) {
-    toast('No tracks with Spotify URIs to export', 'error');
-    return;
-  }
-
-  downloadText(`${built.filenameBase}.json`, built.json, 'application/json');
-  downloadText(`${built.filenameBase}.csv`, built.csv, 'text/csv;charset=utf-8');
-  toast(
-    `Exported ${built.trackCount} track${built.trackCount === 1 ? '' : 's'} (JSON + CSV)`
-  );
 }
 
 async function runImport(ctx: AppCtx, file: File): Promise<void> {
@@ -860,11 +884,11 @@ async function runImport(ctx: AppCtx, file: File): Promise<void> {
   }
 
   const parsed = parseImportFile(text, file.name);
-  if (parsed.errors.length && !parsed.uris.length) {
+  if (parsed.errors.length && !parsed.playlists.length) {
     toast(parsed.errors[0], 'error');
     return;
   }
-  if (!parsed.uris.length) {
+  if (!parsed.playlists.length) {
     toast('No valid Spotify track URIs found in file', 'error');
     return;
   }
@@ -873,27 +897,53 @@ async function runImport(ctx: AppCtx, file: File): Promise<void> {
     toast(parsed.errors[0]);
   }
 
-  const result = await newPlaylistModal({
-    title: 'Import playlist',
-    defaultName: parsed.nameHint,
-    count: parsed.uris.length,
-    skipped: parsed.skipped,
-    confirmLabel: 'Import',
-  });
-  if (!result) return;
+  let bundles = parsed.playlists;
+  let isPublic = true;
+
+  if (bundles.length === 1) {
+    const result = await newPlaylistModal({
+      title: 'Import playlist',
+      defaultName: bundles[0].name,
+      count: bundles[0].uris.length,
+      skipped: parsed.skipped,
+      confirmLabel: 'Import',
+    });
+    if (!result) return;
+    bundles = [{ name: result.name, uris: bundles[0].uris }];
+    isPublic = result.isPublic;
+  } else {
+    const result = await importPlaylistsModal({
+      playlists: bundles.map((b) => ({ name: b.name, trackCount: b.uris.length })),
+      skipped: parsed.skipped,
+    });
+    if (!result) return;
+    isPublic = result.isPublic;
+  }
 
   try {
-    const created = await createPlaylist({
-      name: result.name,
-      public: result.isPublic,
-      description: `Imported via Spotilist from ${file.name}`,
-    });
-    if (!created?.id) throw new Error('Spotify did not return a playlist id.');
-    await addPlaylistItems(created.id, parsed.uris);
-    toastWithLink(
-      `Imported ${parsed.uris.length} tracks into “${result.name}”`,
-      playlistOpenUrl(created)
-    );
+    let firstUrl: string | null = null;
+    let createdCount = 0;
+    let trackTotal = 0;
+    for (const bundle of bundles) {
+      const created = await createPlaylist({
+        name: bundle.name,
+        public: isPublic,
+        description: `Imported via Spotilist from ${file.name}`,
+      });
+      if (!created?.id) throw new Error('Spotify did not return a playlist id.');
+      await addPlaylistItems(created.id, bundle.uris);
+      createdCount += 1;
+      trackTotal += bundle.uris.length;
+      if (!firstUrl) firstUrl = playlistOpenUrl(created);
+    }
+    if (firstUrl) {
+      toastWithLink(
+        `Imported ${createdCount} playlist${createdCount === 1 ? '' : 's'} · ${trackTotal} tracks`,
+        firstUrl
+      );
+    } else {
+      toast(`Imported ${createdCount} playlist${createdCount === 1 ? '' : 's'}`);
+    }
     await refreshPlaylistsKeepingLiked(ctx);
     renderPlaylistList(ctx);
   } catch (e) {

@@ -343,3 +343,60 @@ export function toastWithLink(message: string, href: string, linkLabel = 'Open i
     setTimeout(() => el.remove(), 250);
   }, 6000);
 }
+
+export type ImportPlaylistsOpts = {
+  playlists: { name: string; trackCount: number }[];
+  skipped: number;
+};
+
+/** Confirm multi-playlist import; returns public flag or null if cancelled. */
+export function importPlaylistsModal(
+  opts: ImportPlaylistsOpts
+): Promise<{ isPublic: boolean } | null> {
+  return new Promise((resolve) => {
+    const totalTracks = opts.playlists.reduce((n, p) => n + p.trackCount, 0);
+    const n = opts.playlists.length;
+    const skippedNote =
+      opts.skipped > 0
+        ? ` · ${opts.skipped} row${opts.skipped === 1 ? '' : 's'} skipped`
+        : '';
+    const listHtml = opts.playlists
+      .map(
+        (p) =>
+          `<li><strong>${escapeHtml(p.name)}</strong> — ${p.trackCount} track${p.trackCount === 1 ? '' : 's'}</li>`
+      )
+      .join('');
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal wide" role="dialog" aria-modal="true">
+        <h3>Import ${n} playlist${n === 1 ? '' : 's'}</h3>
+        <p class="muted">${totalTracks} tracks total${skippedNote}.</p>
+        <ul class="import-pl-list">${listHtml}</ul>
+        <label class="check-row">
+          <input type="checkbox" id="import-public" checked />
+          Public (all imported playlists)
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-act="cancel">Cancel</button>
+          <button type="button" class="btn primary" data-act="ok">Import</button>
+        </div>
+      </div>
+    `;
+    const close = (v: { isPublic: boolean } | null) => {
+      overlay.remove();
+      resolve(v);
+    };
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(null);
+    });
+    overlay.querySelector('[data-act="cancel"]')?.addEventListener('click', () => close(null));
+    overlay.querySelector('[data-act="ok"]')?.addEventListener('click', () => {
+      const isPublic = (overlay.querySelector('#import-public') as HTMLInputElement).checked;
+      close({ isPublic });
+    });
+    document.body.appendChild(overlay);
+    (overlay.querySelector('[data-act="ok"]') as HTMLButtonElement)?.focus();
+  });
+}

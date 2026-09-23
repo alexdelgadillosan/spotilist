@@ -729,8 +729,18 @@ body {
   text-decoration: none;
 }
 
-.toast.with-link a:hover {
-  text-decoration: underline;
+.import-pl-list {
+  margin: 0.75rem 0;
+  padding-left: 1.25rem;
+  max-height: 200px;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.import-pl-list strong {
+  color: var(--text);
+  font-weight: 600;
 }
 
 @media (max-width: 800px) {
