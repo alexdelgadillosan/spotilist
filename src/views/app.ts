@@ -2,6 +2,7 @@ import {
   getAllPlaylists,
   getMe,
   getPlaylistTracks,
+  playlistItemCount,
   type SpotifyPlaylist,
   type SpotifyUser,
 } from '../api/spotify';
@@ -68,7 +69,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
   listEl.innerHTML = playlists
     .map((p) => {
       const img = p.images?.[0]?.url;
-      const total = p.tracks?.total;
+      const total = playlistItemCount(p);
       const countLabel =
         typeof total === 'number' ? `${total} tracks` : '… tracks';
       return `
@@ -86,11 +87,11 @@ export async function renderApp(root: HTMLElement): Promise<void> {
     })
     .join('');
 
-  // Update counts in the DOM if hydration finished with real totals
   playlists.forEach((p) => {
     const el = listEl.querySelector(`[data-count-for="${p.id}"]`);
-    if (el && typeof p.tracks?.total === 'number') {
-      el.textContent = `${p.tracks.total} tracks`;
+    const total = playlistItemCount(p);
+    if (el && typeof total === 'number') {
+      el.textContent = `${total} tracks`;
     }
   });
 
@@ -113,26 +114,26 @@ async function loadTracks(root: HTMLElement, playlist: SpotifyPlaylist) {
   pane.innerHTML = `<h2>${escapeHtml(playlist.name || 'Playlist')}</h2><p class="muted">Loading tracks…</p>`;
 
   try {
-    // API max limit is 50 per docs
     const page = await getPlaylistTracks(playlist.id, 50, 0);
     const items = page.items || [];
+    // Only null `item` means removed from catalog. is_playable===false = market block with metadata.
     const available = items.filter(
-      (i) => i?.track && i.track.is_playable !== false
+      (i) => i?.item && i.item.is_playable !== false
     );
     const unavailable = items.filter(
-      (i) => !i?.track || i.track.is_playable === false
+      (i) => !i?.item || i.item.is_playable === false
     );
 
     const rows = items
       .map((i, idx) => {
-        const t = i.track;
+        const t = i.item;
         if (!t) {
           return `
           <tr class="track-unavailable">
             <td class="num">${idx + 1}</td>
             <td>
               <div class="track-title">Unavailable</div>
-              <div class="track-artist">Removed from Spotify catalog or not available in your market</div>
+              <div class="track-artist">Removed from Spotify catalog</div>
             </td>
             <td class="dur">—</td>
           </tr>`;

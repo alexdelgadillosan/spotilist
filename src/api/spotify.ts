@@ -50,28 +50,39 @@ export type SpotifyUser = {
   images?: { url: string }[];
 };
 
+/** Playlist item count — prefer `items` (tracks is deprecated). */
 export type SpotifyPlaylist = {
   id: string;
   name: string;
   images?: { url: string }[] | null;
+  items?: { total?: number; href?: string } | null;
+  /** @deprecated Use `items` — still returned by some endpoints during transition. */
   tracks?: { total?: number; href?: string } | null;
   owner?: { display_name: string | null; id: string };
   collaborative?: boolean;
   public?: boolean | null;
 };
 
+export function playlistItemCount(p: SpotifyPlaylist): number | undefined {
+  const n = p.items?.total ?? p.tracks?.total;
+  return typeof n === 'number' ? n : undefined;
+}
+
+export type SpotifyTrackRef = {
+  id: string;
+  name: string;
+  duration_ms: number;
+  type?: string;
+  is_playable?: boolean;
+  artists: { name: string }[];
+  album: { name: string; images: { url: string }[] };
+  restrictions?: { reason?: string };
+};
+
 export type SpotifyTrackItem = {
   added_at?: string | null;
-  track: {
-    id: string;
-    name: string;
-    duration_ms: number;
-    type?: string;
-    is_playable?: boolean;
-    artists: { name: string }[];
-    album: { name: string; images: { url: string }[] };
-    restrictions?: { reason?: string };
-  } | null;
+  /** Playable catalog object, or null if removed / unavailable. */
+  item: SpotifyTrackRef | null;
 };
 
 export async function getMe(): Promise<SpotifyUser> {
@@ -85,12 +96,12 @@ export async function getMyPlaylists(
   return api(`/me/playlists?limit=${limit}&offset=${offset}`);
 }
 
-/** /me/playlists often returns tracks.total as 0 — hydrate from playlist detail. */
+/** Hydrate item count — list endpoint often returns 0 for totals. */
 export async function getPlaylistMeta(
   playlistId: string
-): Promise<Pick<SpotifyPlaylist, 'id' | 'name' | 'images' | 'tracks'>> {
+): Promise<Pick<SpotifyPlaylist, 'id' | 'name' | 'images' | 'items'>> {
   return api(
-    `/playlists/${encodeURIComponent(playlistId)}?fields=id,name,images,tracks.total`
+    `/playlists/${encodeURIComponent(playlistId)}?fields=id,name,images,items.total`
   );
 }
 
@@ -128,21 +139,21 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
     if (!(page.items || []).length) break;
   }
 
-  // Hydrate totals — list endpoint is unreliable for tracks.total
   const hydrated = await mapPool(all, 6, async (p) => {
-    const listedTotal = p.tracks?.total;
+    const listedTotal = playlistItemCount(p);
     if (typeof listedTotal === 'number' && listedTotal > 0) {
       return p;
     }
     try {
       const meta = await getPlaylistMeta(p.id);
+      const totalItems = meta.items?.total ?? listedTotal ?? 0;
       return {
         ...p,
         name: meta.name || p.name,
         images: meta.images?.length ? meta.images : p.images,
-        tracks: {
-          ...(p.tracks || {}),
-          total: meta.tracks?.total ?? listedTotal ?? 0,
+        items: {
+          ...(p.items || {}),
+          total: totalItems,
         },
       };
     } catch {
@@ -154,10 +165,13 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
 }
 
 /**
- * Get Playlist Items — https://developer.spotify.com/documentation/web-api/reference/get-playlists-items
- * - Endpoint: GET /playlists/{id}/items (max limit 50)
- * - market=from_token enables track relinking for the user
- * - Removed/unavailable catalog items return track: null (still count toward total)
+ * Get Playlist Items
+ * https://developer.spotify.com/documentation/web-api/reference/get-playlists-items
+ *
+ * - GET /playlists/{id}/items (limit max 50)
+ * - Response field is `item` (not deprecated `track`)
+ * - market=from_token enables track relinking for the signed-in user
+ * - Removed catalog entries return item: null (still count toward total)
  */
 export async function getPlaylistTracks(
   playlistId: string,
@@ -168,17 +182,20 @@ export async function getPlaylistTracks(
   const page = await api<{
     items?: Array<{
       added_at?: string | null;
-      track?: SpotifyTrackItem['track'] | null;
-      episode?: SpotifyTrackItem['track'] | null;
+      /** Current field per Web API docs. */
+      item?: SpotifyTrackRef | null;
+      /** @deprecated Use `item`. */
+      track?: SpotifyTrackRef | null;
     }>;
     total?: number;
   }>(
-    `/playlists/${encodeURIComponent(playlistId)}/items?limit=${capped}&offset=${offset}&market=from_token&additional_types=track,episode`
+    `/playlists/${encodeURIComponent(playlistId)}/items?limit=${capped}&offset=${offset}&market=from_token`
   );
 
-  const items: SpotifyTrackItem[] = (page?.items || []).map((item) => ({
-    added_at: item?.added_at,
-    track: item?.track ?? item?.episode ?? null,
+  const items: SpotifyTrackItem[] = (page?.items || []).map((row) => ({
+    added_at: row?.added_at,
+    // Prefer `item`; fall back to deprecated `track` only if needed
+    item: row?.item ?? row?.track ?? null,
   }));
 
   return {
