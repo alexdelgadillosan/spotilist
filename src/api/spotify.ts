@@ -61,13 +61,16 @@ export type SpotifyPlaylist = {
 };
 
 export type SpotifyTrackItem = {
+  added_at?: string | null;
   track: {
     id: string;
     name: string;
     duration_ms: number;
     type?: string;
+    is_playable?: boolean;
     artists: { name: string }[];
     album: { name: string; images: { url: string }[] };
+    restrictions?: { reason?: string };
   } | null;
 };
 
@@ -150,24 +153,33 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
   return hydrated;
 }
 
+/**
+ * Get Playlist Items — https://developer.spotify.com/documentation/web-api/reference/get-playlists-items
+ * - Endpoint: GET /playlists/{id}/items (max limit 50)
+ * - market=from_token enables track relinking for the user
+ * - Removed/unavailable catalog items return track: null (still count toward total)
+ */
 export async function getPlaylistTracks(
   playlistId: string,
   limit = 50,
   offset = 0
 ): Promise<{ items: SpotifyTrackItem[]; total: number }> {
-  // No market filter — it can zero-out tracks. Include episodes as tracks when present.
+  const capped = Math.min(Math.max(limit, 1), 50);
   const page = await api<{
-    items?: Array<SpotifyTrackItem & { episode?: SpotifyTrackItem['track'] }>;
+    items?: Array<{
+      added_at?: string | null;
+      track?: SpotifyTrackItem['track'] | null;
+      episode?: SpotifyTrackItem['track'] | null;
+    }>;
     total?: number;
   }>(
-    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=${limit}&offset=${offset}&additional_types=track,episode`
+    `/playlists/${encodeURIComponent(playlistId)}/items?limit=${capped}&offset=${offset}&market=from_token&additional_types=track,episode`
   );
 
-  const items: SpotifyTrackItem[] = (page?.items || []).map((item) => {
-    if (item?.track) return { track: item.track };
-    if (item?.episode) return { track: item.episode };
-    return { track: null };
-  });
+  const items: SpotifyTrackItem[] = (page?.items || []).map((item) => ({
+    added_at: item?.added_at,
+    track: item?.track ?? item?.episode ?? null,
+  }));
 
   return {
     items,

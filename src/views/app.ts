@@ -113,41 +113,65 @@ async function loadTracks(root: HTMLElement, playlist: SpotifyPlaylist) {
   pane.innerHTML = `<h2>${escapeHtml(playlist.name || 'Playlist')}</h2><p class="muted">Loading tracks…</p>`;
 
   try {
-    const page = await getPlaylistTracks(playlist.id, 100, 0);
-    const playable = (page.items || []).filter((i) => i?.track);
-    const rows = playable
+    // API max limit is 50 per docs
+    const page = await getPlaylistTracks(playlist.id, 50, 0);
+    const items = page.items || [];
+    const available = items.filter(
+      (i) => i?.track && i.track.is_playable !== false
+    );
+    const unavailable = items.filter(
+      (i) => !i?.track || i.track.is_playable === false
+    );
+
+    const rows = items
       .map((i, idx) => {
-        const t = i.track!;
+        const t = i.track;
+        if (!t) {
+          return `
+          <tr class="track-unavailable">
+            <td class="num">${idx + 1}</td>
+            <td>
+              <div class="track-title">Unavailable</div>
+              <div class="track-artist">Removed from Spotify catalog or not available in your market</div>
+            </td>
+            <td class="dur">—</td>
+          </tr>`;
+        }
+        const blocked = t.is_playable === false;
         const artists = (t.artists || []).map((a) => a.name).join(', ');
+        const reason = t.restrictions?.reason
+          ? ` · ${t.restrictions.reason}`
+          : '';
         return `
-        <tr>
+        <tr class="${blocked ? 'track-unavailable' : ''}">
           <td class="num">${idx + 1}</td>
           <td>
-            <div class="track-title">${escapeHtml(t.name || 'Unknown')}</div>
-            <div class="track-artist">${escapeHtml(artists || '—')}</div>
+            <div class="track-title">${escapeHtml(t.name || 'Unknown')}${
+              blocked ? ' <span class="badge">unavailable</span>' : ''
+            }</div>
+            <div class="track-artist">${escapeHtml(artists || '—')}${escapeHtml(reason)}</div>
           </td>
           <td class="dur">${formatDuration(t.duration_ms || 0)}</td>
         </tr>`;
       })
       .join('');
 
-    const total = page.total ?? playable.length;
+    const total = page.total ?? items.length;
     pane.innerHTML = `
       <div class="track-header">
         <h2>${escapeHtml(playlist.name || 'Playlist')}</h2>
-        <p class="muted">${total} items${total > 100 ? ' (showing first 100)' : ''}${
-          playable.length < (page.items?.length || 0)
-            ? ` · ${playable.length} playable`
-            : ''
-        }</p>
+        <p class="muted">
+          ${total} items${total > 50 ? ' (showing first 50)' : ''}
+          · ${available.length} available
+          ${unavailable.length ? ` · ${unavailable.length} unavailable` : ''}
+        </p>
       </div>
       <table class="track-table">
         <thead><tr><th>#</th><th>Title</th><th>Time</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="3" class="muted">No tracks in this playlist (or Spotify returned empty).</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="3" class="muted">No items in this playlist.</td></tr>'}</tbody>
       </table>
     `;
 
-    // Keep sidebar count in sync
     const countEl = root.querySelector(`[data-count-for="${playlist.id}"]`);
     if (countEl && typeof total === 'number') {
       countEl.textContent = `${total} tracks`;

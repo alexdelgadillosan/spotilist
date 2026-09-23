@@ -375,6 +375,33 @@ body {
   font-size: 0.9rem;
 }
 
+.track-unavailable .track-title,
+.track-unavailable .track-artist,
+.track-unavailable .num,
+.track-unavailable .dur {
+  color: #6b6b6b;
+}
+
+.track-unavailable .track-title {
+  font-style: italic;
+  font-weight: 500;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-style: normal;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #c4c4c4;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+}
+
 @media (max-width: 800px) {
   .app-body {
     grid-template-columns: 1fr;
