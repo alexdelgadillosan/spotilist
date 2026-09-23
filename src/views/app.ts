@@ -68,7 +68,9 @@ export async function renderApp(root: HTMLElement): Promise<void> {
   listEl.innerHTML = playlists
     .map((p) => {
       const img = p.images?.[0]?.url;
-      const total = p.tracks?.total ?? 0;
+      const total = p.tracks?.total;
+      const countLabel =
+        typeof total === 'number' ? `${total} tracks` : '… tracks';
       return `
       <button type="button" class="playlist-item" data-id="${p.id}">
         ${
@@ -78,11 +80,19 @@ export async function renderApp(root: HTMLElement): Promise<void> {
         }
         <span class="playlist-meta">
           <span class="playlist-name">${escapeHtml(p.name || 'Untitled')}</span>
-          <span class="playlist-count">${total} tracks</span>
+          <span class="playlist-count" data-count-for="${p.id}">${countLabel}</span>
         </span>
       </button>`;
     })
     .join('');
+
+  // Update counts in the DOM if hydration finished with real totals
+  playlists.forEach((p) => {
+    const el = listEl.querySelector(`[data-count-for="${p.id}"]`);
+    if (el && typeof p.tracks?.total === 'number') {
+      el.textContent = `${p.tracks.total} tracks`;
+    }
+  });
 
   listEl.querySelectorAll<HTMLButtonElement>('.playlist-item').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -104,8 +114,8 @@ async function loadTracks(root: HTMLElement, playlist: SpotifyPlaylist) {
 
   try {
     const page = await getPlaylistTracks(playlist.id, 100, 0);
-    const rows = (page.items || [])
-      .filter((i) => i?.track)
+    const playable = (page.items || []).filter((i) => i?.track);
+    const rows = playable
       .map((i, idx) => {
         const t = i.track!;
         const artists = (t.artists || []).map((a) => a.name).join(', ');
@@ -114,24 +124,34 @@ async function loadTracks(root: HTMLElement, playlist: SpotifyPlaylist) {
           <td class="num">${idx + 1}</td>
           <td>
             <div class="track-title">${escapeHtml(t.name || 'Unknown')}</div>
-            <div class="track-artist">${escapeHtml(artists)}</div>
+            <div class="track-artist">${escapeHtml(artists || '—')}</div>
           </td>
           <td class="dur">${formatDuration(t.duration_ms || 0)}</td>
         </tr>`;
       })
       .join('');
 
-    const total = page.total ?? 0;
+    const total = page.total ?? playable.length;
     pane.innerHTML = `
       <div class="track-header">
         <h2>${escapeHtml(playlist.name || 'Playlist')}</h2>
-        <p class="muted">${total} tracks${total > 100 ? ' (showing first 100)' : ''}</p>
+        <p class="muted">${total} items${total > 100 ? ' (showing first 100)' : ''}${
+          playable.length < (page.items?.length || 0)
+            ? ` · ${playable.length} playable`
+            : ''
+        }</p>
       </div>
       <table class="track-table">
         <thead><tr><th>#</th><th>Title</th><th>Time</th></tr></thead>
-        <tbody>${rows || '<tr><td colspan="3" class="muted">No tracks</td></tr>'}</tbody>
+        <tbody>${rows || '<tr><td colspan="3" class="muted">No tracks in this playlist (or Spotify returned empty).</td></tr>'}</tbody>
       </table>
     `;
+
+    // Keep sidebar count in sync
+    const countEl = root.querySelector(`[data-count-for="${playlist.id}"]`);
+    if (countEl && typeof total === 'number') {
+      countEl.textContent = `${total} tracks`;
+    }
   } catch (e) {
     pane.innerHTML = `<p class="banner error">${
       e instanceof Error ? e.message : String(e)

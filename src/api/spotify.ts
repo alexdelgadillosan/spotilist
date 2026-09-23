@@ -31,7 +31,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
     if (res.status === 403) {
       throw new Error(
-        `Forbidden (403): ${detail}. This playlist may be collaborative/restricted — Log out and Connect again to refresh permissions, or try another playlist.`
+        `Forbidden (403): ${detail}. Log out and Connect again, or try another playlist.`
       );
     }
     throw new Error(`Spotify API ${res.status}: ${detail}`);
@@ -54,7 +54,7 @@ export type SpotifyPlaylist = {
   id: string;
   name: string;
   images?: { url: string }[] | null;
-  tracks?: { total?: number } | null;
+  tracks?: { total?: number; href?: string } | null;
   owner?: { display_name: string | null; id: string };
   collaborative?: boolean;
   public?: boolean | null;
@@ -82,6 +82,34 @@ export async function getMyPlaylists(
   return api(`/me/playlists?limit=${limit}&offset=${offset}`);
 }
 
+/** /me/playlists often returns tracks.total as 0 — hydrate from playlist detail. */
+export async function getPlaylistMeta(
+  playlistId: string
+): Promise<Pick<SpotifyPlaylist, 'id' | 'name' | 'images' | 'tracks'>> {
+  return api(
+    `/playlists/${encodeURIComponent(playlistId)}?fields=id,name,images,tracks.total`
+  );
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let i = 0;
+  async function worker() {
+    while (i < items.length) {
+      const idx = i++;
+      results[idx] = await fn(items[idx]);
+    }
+  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker())
+  );
+  return results;
+}
+
 export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
   const all: SpotifyPlaylist[] = [];
   let offset = 0;
@@ -96,7 +124,30 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
     offset += (page.items || []).length;
     if (!(page.items || []).length) break;
   }
-  return all;
+
+  // Hydrate totals — list endpoint is unreliable for tracks.total
+  const hydrated = await mapPool(all, 6, async (p) => {
+    const listedTotal = p.tracks?.total;
+    if (typeof listedTotal === 'number' && listedTotal > 0) {
+      return p;
+    }
+    try {
+      const meta = await getPlaylistMeta(p.id);
+      return {
+        ...p,
+        name: meta.name || p.name,
+        images: meta.images?.length ? meta.images : p.images,
+        tracks: {
+          ...(p.tracks || {}),
+          total: meta.tracks?.total ?? listedTotal ?? 0,
+        },
+      };
+    } catch {
+      return p;
+    }
+  });
+
+  return hydrated;
 }
 
 export async function getPlaylistTracks(
@@ -104,12 +155,22 @@ export async function getPlaylistTracks(
   limit = 50,
   offset = 0
 ): Promise<{ items: SpotifyTrackItem[]; total: number }> {
-  // Avoid `fields=` — it can 403 on some playlist types. market=from_token helps availability.
-  const page = await api<{ items?: SpotifyTrackItem[]; total?: number }>(
-    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=${limit}&offset=${offset}&market=from_token`
+  // No market filter — it can zero-out tracks. Include episodes as tracks when present.
+  const page = await api<{
+    items?: Array<SpotifyTrackItem & { episode?: SpotifyTrackItem['track'] }>;
+    total?: number;
+  }>(
+    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=${limit}&offset=${offset}&additional_types=track,episode`
   );
+
+  const items: SpotifyTrackItem[] = (page?.items || []).map((item) => {
+    if (item?.track) return { track: item.track };
+    if (item?.episode) return { track: item.episode };
+    return { track: null };
+  });
+
   return {
-    items: page?.items || [],
-    total: typeof page?.total === 'number' ? page.total : page?.items?.length || 0,
+    items,
+    total: typeof page?.total === 'number' ? page.total : items.length,
   };
 }
