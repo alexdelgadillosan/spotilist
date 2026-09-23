@@ -6,6 +6,7 @@ const features = [
   'Merge playlists with auto-dedupe',
   'Filter by artist, album, duration, date, or explicit',
   'Create new playlists from a selection or filter',
+  'Import & export playlists as JSON or CSV',
 ];
 
 export function renderLanding(root: HTMLElement, opts?: { error?: string }) {

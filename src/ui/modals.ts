@@ -105,18 +105,24 @@ export type NewPlaylistOpts = {
   title: string;
   defaultName: string;
   count: number;
+  skipped?: number;
+  confirmLabel?: string;
 };
 
 export function newPlaylistModal(
   opts: NewPlaylistOpts
 ): Promise<{ name: string; isPublic: boolean } | null> {
   return new Promise((resolve) => {
+    const skippedNote =
+      opts.skipped && opts.skipped > 0
+        ? ` · ${opts.skipped} row${opts.skipped === 1 ? '' : 's'} skipped (no valid URI)`
+        : '';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
       <div class="modal" role="dialog" aria-modal="true">
         <h3>${escapeHtml(opts.title)}</h3>
-        <p class="muted">Will add ${opts.count} track${opts.count === 1 ? '' : 's'}.</p>
+        <p class="muted">Will add ${opts.count} track${opts.count === 1 ? '' : 's'}${skippedNote}.</p>
         <label class="field-label">Name
           <input type="text" class="field" id="pl-name" value="${escapeHtml(opts.defaultName)}" />
         </label>
@@ -126,7 +132,9 @@ export function newPlaylistModal(
         </label>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-act="cancel">Cancel</button>
-          <button type="button" class="btn primary" data-act="ok">Create</button>
+          <button type="button" class="btn primary" data-act="ok">
+            ${escapeHtml(opts.confirmLabel || 'Create')}
+          </button>
         </div>
       </div>
     `;

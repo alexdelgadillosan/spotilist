@@ -28,6 +28,7 @@ import {
   urisFromItems,
   type TrackFilter,
 } from '../ops/playlist-ops';
+import { buildExport, downloadText, parseImportFile } from '../ops/transfer';
 import {
   clearSelection,
   deselectMany,
@@ -91,6 +92,14 @@ export async function renderApp(root: HTMLElement): Promise<void> {
           <div class="sidebar-actions">
             <button type="button" class="ghost-btn small" id="merge-btn" disabled>Merge</button>
             <button type="button" class="ghost-btn small" id="dedupe-btn" disabled>Dedupe</button>
+            <button type="button" class="ghost-btn small" id="export-btn" disabled>Export</button>
+            <button type="button" class="ghost-btn small" id="import-btn">Import</button>
+            <input
+              type="file"
+              id="import-file"
+              accept=".json,.csv,text/csv,application/json"
+              hidden
+            />
           </div>
           <div id="playlist-list" class="playlist-list"><p class="muted">Loading playlists…</p></div>
         </aside>
@@ -184,6 +193,16 @@ function wireSidebar(ctx: AppCtx): void {
 
   ctx.root.querySelector('#merge-btn')?.addEventListener('click', () => void runMerge(ctx));
   ctx.root.querySelector('#dedupe-btn')?.addEventListener('click', () => void runDedupe(ctx));
+  ctx.root.querySelector('#export-btn')?.addEventListener('click', () => void runExport(ctx));
+  ctx.root.querySelector('#import-btn')?.addEventListener('click', () => {
+    (ctx.root.querySelector('#import-file') as HTMLInputElement)?.click();
+  });
+  ctx.root.querySelector('#import-file')?.addEventListener('change', (e) => {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (file) void runImport(ctx, file);
+  });
 }
 
 function realPlaylists(ctx: AppCtx): SpotifyPlaylist[] {
@@ -277,9 +296,11 @@ function renderPlaylistList(ctx: AppCtx): void {
 function updateSidebarActions(ctx: AppCtx): void {
   const mergeBtn = ctx.root.querySelector('#merge-btn') as HTMLButtonElement;
   const dedupeBtn = ctx.root.querySelector('#dedupe-btn') as HTMLButtonElement;
+  const exportBtn = ctx.root.querySelector('#export-btn') as HTMLButtonElement;
   mergeBtn.disabled = ctx.mergeChecked.size < 2;
   // Dedupe only applies to real playlists (Liked Songs isn't editable that way)
   dedupeBtn.disabled = !ctx.activeId || isLikedSongs(ctx.activeId);
+  exportBtn.disabled = !ctx.activeId || ctx.activeItems.length === 0;
 }
 
 async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void> {
@@ -307,6 +328,7 @@ async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void>
     if (pl) pl.items = { ...(pl.items || {}), total };
 
     renderTrackPane(ctx);
+    updateSidebarActions(ctx);
   } catch (e) {
     pane.innerHTML = `<p class="banner error">${
       e instanceof Error ? e.message : String(e)
@@ -743,6 +765,109 @@ async function runDedupe(ctx: AppCtx): Promise<void> {
     toast(`Removed ${duplicateCount} duplicates`);
     await loadTracks(ctx, pl);
     await refreshPlaylistMeta(ctx, [pl.id]);
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+function selectionAsExportItems(): SpotifyTrackItem[] {
+  return getSelection().map((s) => {
+    const id = s.uri.split(':').pop() || '';
+    return {
+      added_at: null,
+      item: {
+        id,
+        uri: s.uri,
+        name: s.name,
+        duration_ms: 0,
+        artists: s.artists
+          ? s.artists.split(', ').map((name) => ({ name }))
+          : [],
+        album: { name: '', images: [] },
+      },
+    };
+  });
+}
+
+async function runExport(ctx: AppCtx): Promise<void> {
+  const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
+  if (!pl) {
+    toast('Select a playlist first', 'error');
+    return;
+  }
+
+  const fromSelection = getSelectionCount() > 0;
+  const items = fromSelection
+    ? selectionAsExportItems()
+    : applyTrackFilter(ctx.activeItems, ctx.filter);
+
+  if (!items.length) {
+    toast('Nothing to export', 'error');
+    return;
+  }
+
+  const sourceName = fromSelection
+    ? `${pl.name} (selection)`
+    : pl.name;
+  const built = buildExport({ id: pl.id, name: sourceName }, items);
+  if (!built.trackCount) {
+    toast('No tracks with Spotify URIs to export', 'error');
+    return;
+  }
+
+  downloadText(`${built.filenameBase}.json`, built.json, 'application/json');
+  downloadText(`${built.filenameBase}.csv`, built.csv, 'text/csv;charset=utf-8');
+  toast(
+    `Exported ${built.trackCount} track${built.trackCount === 1 ? '' : 's'} (JSON + CSV)`
+  );
+}
+
+async function runImport(ctx: AppCtx, file: File): Promise<void> {
+  let text: string;
+  try {
+    text = await file.text();
+  } catch {
+    toast('Could not read file', 'error');
+    return;
+  }
+
+  const parsed = parseImportFile(text, file.name);
+  if (parsed.errors.length && !parsed.uris.length) {
+    toast(parsed.errors[0], 'error');
+    return;
+  }
+  if (!parsed.uris.length) {
+    toast('No valid Spotify track URIs found in file', 'error');
+    return;
+  }
+
+  if (parsed.errors.length) {
+    toast(parsed.errors[0]);
+  }
+
+  const result = await newPlaylistModal({
+    title: 'Import playlist',
+    defaultName: parsed.nameHint,
+    count: parsed.uris.length,
+    skipped: parsed.skipped,
+    confirmLabel: 'Import',
+  });
+  if (!result) return;
+
+  try {
+    const created = await createPlaylist({
+      name: result.name,
+      public: result.isPublic,
+      description: `Imported via Spotilist from ${file.name}`,
+    });
+    if (!created?.id) throw new Error('Spotify did not return a playlist id.');
+    await addPlaylistItems(created.id, parsed.uris);
+    toastWithLink(
+      `Imported ${parsed.uris.length} tracks into “${result.name}”`,
+      playlistOpenUrl(created)
+    );
+    await refreshPlaylistsKeepingLiked(ctx);
+    renderPlaylistList(ctx);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
   }
