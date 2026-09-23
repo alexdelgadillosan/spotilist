@@ -1,6 +1,10 @@
 import { getAccessToken, logout } from '../auth/spotify-auth';
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
+async function sleep(ms: number): Promise<void> {
+  await new Promise((r) => setTimeout(r, ms));
+}
+
+async function api<T>(path: string, init?: RequestInit, attempt = 0): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
     throw new Error('Not authenticated');
@@ -18,6 +22,12 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401) {
     logout();
     throw new Error('Unauthorized — please Connect Spotify again.');
+  }
+
+  if (res.status === 429 && attempt < 4) {
+    const retryAfter = Number(res.headers.get('Retry-After') || '1');
+    await sleep(Math.max(retryAfter, 1) * 1000);
+    return api(path, init, attempt + 1);
   }
 
   if (!res.ok) {
@@ -70,11 +80,13 @@ export function playlistItemCount(p: SpotifyPlaylist): number | undefined {
 
 export type SpotifyTrackRef = {
   id: string;
+  uri: string;
   name: string;
   duration_ms: number;
   type?: string;
+  explicit?: boolean;
   is_playable?: boolean;
-  artists: { name: string }[];
+  artists: { name: string; id?: string }[];
   album: { name: string; images: { url: string }[] };
   restrictions?: { reason?: string };
 };
@@ -84,6 +96,17 @@ export type SpotifyTrackItem = {
   /** Playable catalog object, or null if removed / unavailable. */
   item: SpotifyTrackRef | null;
 };
+
+function mapPlaylistRow(row: {
+  added_at?: string | null;
+  item?: SpotifyTrackRef | null;
+  track?: SpotifyTrackRef | null;
+}): SpotifyTrackItem {
+  return {
+    added_at: row?.added_at,
+    item: row?.item ?? row?.track ?? null,
+  };
+}
 
 export async function getMe(): Promise<SpotifyUser> {
   return api<SpotifyUser>('/me');
@@ -165,41 +188,134 @@ export async function getAllPlaylists(): Promise<SpotifyPlaylist[]> {
 }
 
 /**
- * Get Playlist Items
+ * Get Playlist Items (one page)
  * https://developer.spotify.com/documentation/web-api/reference/get-playlists-items
- *
- * - GET /playlists/{id}/items (limit max 50)
- * - Response field is `item` (not deprecated `track`)
- * - market=from_token enables track relinking for the signed-in user
- * - Removed catalog entries return item: null (still count toward total)
  */
 export async function getPlaylistTracks(
   playlistId: string,
   limit = 50,
   offset = 0
-): Promise<{ items: SpotifyTrackItem[]; total: number }> {
+): Promise<{ items: SpotifyTrackItem[]; total: number; next: string | null }> {
   const capped = Math.min(Math.max(limit, 1), 50);
   const page = await api<{
     items?: Array<{
       added_at?: string | null;
-      /** Current field per Web API docs. */
       item?: SpotifyTrackRef | null;
-      /** @deprecated Use `item`. */
       track?: SpotifyTrackRef | null;
     }>;
     total?: number;
+    next?: string | null;
   }>(
     `/playlists/${encodeURIComponent(playlistId)}/items?limit=${capped}&offset=${offset}&market=from_token`
   );
 
-  const items: SpotifyTrackItem[] = (page?.items || []).map((row) => ({
-    added_at: row?.added_at,
-    // Prefer `item`; fall back to deprecated `track` only if needed
-    item: row?.item ?? row?.track ?? null,
-  }));
-
+  const items = (page?.items || []).map(mapPlaylistRow);
   return {
     items,
     total: typeof page?.total === 'number' ? page.total : items.length,
+    next: page?.next ?? null,
   };
+}
+
+export async function getAllPlaylistItems(
+  playlistId: string,
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ items: SpotifyTrackItem[]; total: number }> {
+  const all: SpotifyTrackItem[] = [];
+  let offset = 0;
+  let total = Infinity;
+
+  while (offset < total) {
+    const page = await getPlaylistTracks(playlistId, 50, offset);
+    all.push(...page.items);
+    total = page.total;
+    offset += page.items.length;
+    onProgress?.(all.length, total);
+    if (!page.items.length || !page.next) break;
+  }
+
+  return { items: all, total: typeof total === 'number' && total !== Infinity ? total : all.length };
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+/** POST /me/playlists — https://developer.spotify.com/documentation/web-api/reference/create-playlist */
+export async function createPlaylist(opts: {
+  name: string;
+  public?: boolean;
+  description?: string;
+}): Promise<SpotifyPlaylist> {
+  return api<SpotifyPlaylist>('/me/playlists', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: opts.name,
+      public: opts.public ?? false,
+      description: opts.description ?? '',
+    }),
+  });
+}
+
+/** POST /playlists/{id}/items — max 100 uris per request */
+export async function addPlaylistItems(
+  playlistId: string,
+  uris: string[]
+): Promise<void> {
+  const unique = [...new Set(uris.filter(Boolean))];
+  for (const batch of chunk(unique, 100)) {
+    await api(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+      method: 'POST',
+      body: JSON.stringify({ uris: batch }),
+    });
+  }
+}
+
+/** DELETE /playlists/{id}/items — max 100 items per request */
+export async function removePlaylistItems(
+  playlistId: string,
+  uris: string[]
+): Promise<void> {
+  const unique = [...new Set(uris.filter(Boolean))];
+  for (const batch of chunk(unique, 100)) {
+    await api(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+      method: 'DELETE',
+      body: JSON.stringify({
+        items: batch.map((uri) => ({ uri })),
+      }),
+    });
+  }
+}
+
+/**
+ * PUT /playlists/{id}/items — replace entire playlist contents (for dedupe).
+ * Max 100 uris per request; first call replaces, subsequent append.
+ */
+export async function replacePlaylistItems(
+  playlistId: string,
+  uris: string[]
+): Promise<void> {
+  const batches = chunk(uris.filter(Boolean), 100);
+  if (!batches.length) {
+    await api(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+      method: 'PUT',
+      body: JSON.stringify({ uris: [] }),
+    });
+    return;
+  }
+  for (let i = 0; i < batches.length; i++) {
+    if (i === 0) {
+      await api(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+        method: 'PUT',
+        body: JSON.stringify({ uris: batches[i] }),
+      });
+    } else {
+      await api(`/playlists/${encodeURIComponent(playlistId)}/items`, {
+        method: 'POST',
+        body: JSON.stringify({ uris: batches[i] }),
+      });
+    }
+  }
 }

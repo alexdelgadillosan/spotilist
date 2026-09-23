@@ -1,11 +1,11 @@
 import { getClientId, startLogin } from '../auth/spotify-auth';
 
 const features = [
-  'Multi-select tracks across playlists',
-  'Bulk add, move, or delete',
-  'Merge playlists + auto-dedupe',
-  'Build new lists from genres & filters',
-  'Diff, smart mix, archive & export (next)',
+  'Search and browse all your playlists',
+  'Multi-select tracks — add, move, or delete in bulk',
+  'Merge playlists with auto-dedupe',
+  'Filter by artist, album, duration, date, or explicit',
+  'Create new playlists from a selection or filter',
 ];
 
 export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
@@ -27,7 +27,7 @@ export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
       <h1>Bulk-edit playlists the way Spotify should have.</h1>
       <p class="lede">
         Connect your account, multi-select tracks, merge lists, dedupe, and
-        spin up new playlists from genres — without the manual pain.
+        spin up new playlists from filters — without the manual pain.
       </p>
       ${
         opts?.error

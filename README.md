@@ -1,16 +1,18 @@
 # Spotilist
 
-Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and genre-based mixes.
+Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and filter-based mixes.
 
 **Live:** https://alexdelgadillosan.github.io/spotilist/
 
 ## What works now
 
 - **Connect Spotify** via OAuth **Authorization Code + PKCE** (safe for GitHub Pages)
-- List your playlists and browse tracks
-- Log out
-
-Bulk edit / merge / genre mix come next.
+- Search and browse your playlists (full item load with pagination)
+- Multi-select tracks — bulk **add**, **move**, **delete**, or **new playlist**
+- **Merge** playlists with dry-run preview + auto-dedupe
+- **Dedupe** the active playlist
+- Filter by title/artist/album, duration, date added, explicit
+- Unavailable catalog items surfaced clearly
 
 ## One-time Spotify setup
 
@@ -35,8 +37,8 @@ Add repository secret **`VITE_SPOTIFY_CLIENT_ID`** (Settings → Secrets and var
 
 ## Scopes requested
 
-`playlist-read-private`, `playlist-modify-public`, `playlist-modify-private`, `user-library-read`, `user-read-email`
+`playlist-read-private`, `playlist-read-collaborative`, `playlist-modify-public`, `playlist-modify-private`, `user-library-read`, `user-read-email`
 
 ## Stack
 
-Vite · TypeScript · Spotify Web API (PKCE)
+Vite · TypeScript · Spotify Web API (PKCE) — uses current `/playlists/{id}/items` and `POST /me/playlists` (not deprecated `/tracks` paths)
