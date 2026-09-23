@@ -22,7 +22,19 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`Spotify API ${res.status}: ${text}`);
+    let detail = text;
+    try {
+      const j = JSON.parse(text) as { error?: { message?: string; status?: number } };
+      if (j.error?.message) detail = j.error.message;
+    } catch {
+      /* keep raw */
+    }
+    if (res.status === 403) {
+      throw new Error(
+        `Forbidden (403): ${detail}. This playlist may be collaborative/restricted — Log out and Connect again to refresh permissions, or try another playlist.`
+      );
+    }
+    throw new Error(`Spotify API ${res.status}: ${detail}`);
   }
 
   if (res.status === 204) {
@@ -44,6 +56,8 @@ export type SpotifyPlaylist = {
   images?: { url: string }[] | null;
   tracks?: { total?: number } | null;
   owner?: { display_name: string | null; id: string };
+  collaborative?: boolean;
+  public?: boolean | null;
 };
 
 export type SpotifyTrackItem = {
@@ -51,6 +65,7 @@ export type SpotifyTrackItem = {
     id: string;
     name: string;
     duration_ms: number;
+    type?: string;
     artists: { name: string }[];
     album: { name: string; images: { url: string }[] };
   } | null;
@@ -89,8 +104,9 @@ export async function getPlaylistTracks(
   limit = 50,
   offset = 0
 ): Promise<{ items: SpotifyTrackItem[]; total: number }> {
+  // Avoid `fields=` — it can 403 on some playlist types. market=from_token helps availability.
   const page = await api<{ items?: SpotifyTrackItem[]; total?: number }>(
-    `/playlists/${playlistId}/tracks?limit=${limit}&offset=${offset}&fields=total,items(track(id,name,duration_ms,artists(name),album(name,images)))`
+    `/playlists/${encodeURIComponent(playlistId)}/tracks?limit=${limit}&offset=${offset}&market=from_token`
   );
   return {
     items: page?.items || [],

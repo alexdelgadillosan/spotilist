@@ -9,11 +9,16 @@ import {
 
 const SCOPES = [
   'playlist-read-private',
+  'playlist-read-collaborative',
   'playlist-modify-public',
   'playlist-modify-private',
   'user-library-read',
   'user-read-email',
 ].join(' ');
+
+/** Bump when scopes change so stale tokens force re-login. */
+const SCOPE_VERSION = 'v2-collab';
+const SCOPE_VERSION_KEY = 'spotilist_scope_version';
 
 export function getClientId(): string {
   return (import.meta.env.VITE_SPOTIFY_CLIENT_ID as string | undefined)?.trim() || '';
@@ -104,6 +109,7 @@ export async function handleAuthCallback(): Promise<boolean> {
     token_type: data.token_type,
     scope: data.scope,
   });
+  localStorage.setItem(SCOPE_VERSION_KEY, SCOPE_VERSION);
 
   // Clean query params from URL
   window.history.replaceState({}, '', getRedirectUri());
@@ -153,6 +159,11 @@ async function refreshAccessToken(bundle: TokenBundle): Promise<TokenBundle> {
 }
 
 export async function getAccessToken(): Promise<string | null> {
+  if (localStorage.getItem(SCOPE_VERSION_KEY) !== SCOPE_VERSION) {
+    clearTokens();
+    localStorage.removeItem(SCOPE_VERSION_KEY);
+    return null;
+  }
   let bundle = readTokens();
   if (!bundle) return null;
   if (isExpired(bundle)) {
@@ -163,8 +174,12 @@ export async function getAccessToken(): Promise<string | null> {
 
 export function logout(): void {
   clearTokens();
+  localStorage.removeItem(SCOPE_VERSION_KEY);
 }
 
 export function isLoggedIn(): boolean {
+  if (localStorage.getItem(SCOPE_VERSION_KEY) !== SCOPE_VERSION) {
+    return false;
+  }
   return !!readTokens();
 }
