@@ -37,7 +37,7 @@ Add repository secret **`VITE_SPOTIFY_CLIENT_ID`** (Settings → Secrets and var
 
 ## Scopes requested
 
-`playlist-read-private`, `playlist-read-collaborative`, `playlist-modify-public`, `playlist-modify-private`, `user-library-read`, `user-read-email`
+`playlist-read-private`, `playlist-read-collaborative`, `playlist-modify-public`, `playlist-modify-private`, `user-library-read`, `user-library-modify`, `user-read-email`
 
 ## Stack
 

@@ -11,7 +11,11 @@ export type TrackFilter = {
 };
 
 export function trackUri(item: SpotifyTrackItem): string | null {
-  return item.item?.uri || null;
+  const t = item.item;
+  if (!t) return null;
+  if (t.uri) return t.uri;
+  if (!t.id) return null;
+  return `spotify:${t.type === 'episode' ? 'episode' : 'track'}:${t.id}`;
 }
 
 export function dedupeUris(uris: string[]): { unique: string[]; duplicateCount: number } {

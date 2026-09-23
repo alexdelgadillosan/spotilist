@@ -13,11 +13,12 @@ const SCOPES = [
   'playlist-modify-public',
   'playlist-modify-private',
   'user-library-read',
+  'user-library-modify',
   'user-read-email',
 ].join(' ');
 
 /** Bump when scopes change so stale tokens force re-login. */
-const SCOPE_VERSION = 'v2-collab';
+const SCOPE_VERSION = 'v3-library-modify';
 const SCOPE_VERSION_KEY = 'spotilist_scope_version';
 
 export function getClientId(): string {

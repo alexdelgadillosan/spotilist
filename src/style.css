@@ -643,9 +643,23 @@ body {
   transform: translateX(-50%) translateY(0);
 }
 
-.toast.error {
-  border-color: rgba(255, 80, 80, 0.45);
-  color: #ffb4b4;
+.toast.with-link {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  border-radius: 12px;
+}
+
+.toast.with-link a {
+  color: var(--green);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.toast.with-link a:hover {
+  text-decoration: underline;
 }
 
 @media (max-width: 800px) {

@@ -6,6 +6,7 @@ import {
   getMe,
   getPlaylistMeta,
   playlistItemCount,
+  playlistOpenUrl,
   removePlaylistItems,
   replacePlaylistItems,
   type SpotifyPlaylist,
@@ -18,6 +19,7 @@ import {
   dedupeUris,
   mergePreview,
   parseMinutesToMs,
+  trackUri,
   urisFromItems,
   type TrackFilter,
 } from '../ops/playlist-ops';
@@ -39,6 +41,7 @@ import {
   newPlaylistModal,
   pickPlaylistModal,
   toast,
+  toastWithLink,
 } from '../ui/modals';
 
 function formatDuration(ms: number): string {
@@ -143,7 +146,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
       const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
       selectMany(
         filtered
-          .filter((i) => i.item?.uri && i.item.is_playable !== false)
+          .filter((i) => trackUri(i) && i.item?.is_playable !== false)
           .map((i) => toSelected(i, pl!))
       );
     }
@@ -152,8 +155,9 @@ export async function renderApp(root: HTMLElement): Promise<void> {
 
 function toSelected(row: SpotifyTrackItem, pl: SpotifyPlaylist): SelectedTrack {
   const t = row.item!;
+  const uri = trackUri(row)!;
   return {
-    uri: t.uri,
+    uri,
     name: t.name,
     artists: (t.artists || []).map((a) => a.name).join(', '),
     sourcePlaylistId: pl.id,
@@ -302,7 +306,7 @@ function renderTrackPane(ctx: AppCtx): void {
       <input type="date" class="field" id="added-after" value="${f.addedAfter || ''}" title="Added after" />
       <label class="check-row inline"><input type="checkbox" id="explicit-only" ${f.explicitOnly ? 'checked' : ''}/> Explicit</label>
       <label class="check-row inline"><input type="checkbox" id="hide-unavail" ${f.hideUnavailable ? 'checked' : ''}/> Hide unavailable</label>
-      <button type="button" class="ghost-btn small" id="new-from-filter" ${filtered.some((i) => i.item?.uri) ? '' : 'disabled'}>New from filter</button>
+      <button type="button" class="ghost-btn small" id="new-from-filter" ${filtered.some((i) => trackUri(i)) ? '' : 'disabled'}>New from filter</button>
     </div>
     <table class="track-table">
       <thead>
@@ -349,7 +353,7 @@ function renderTrackPane(ctx: AppCtx): void {
     wireRowChecks(ctx, pane, pl, next);
     updateSelectAllState(pane, next);
     const btn = pane.querySelector('#new-from-filter') as HTMLButtonElement;
-    btn.disabled = !next.some((i) => i.item?.uri);
+    btn.disabled = !next.some((i) => trackUri(i));
   });
   ['#min-dur', '#max-dur', '#added-after', '#explicit-only', '#hide-unavail'].forEach((sel) => {
     pane.querySelector(sel)?.addEventListener('change', applyFiltersFromDom);
@@ -362,9 +366,9 @@ function renderTrackPane(ctx: AppCtx): void {
   pane.querySelector('#select-all')?.addEventListener('change', (e) => {
     const on = (e.target as HTMLInputElement).checked;
     const rows = applyTrackFilter(ctx.activeItems, ctx.filter);
-    const selectable = rows.filter((i) => i.item?.uri && i.item.is_playable !== false);
+    const selectable = rows.filter((i) => trackUri(i) && i.item?.is_playable !== false);
     if (on) selectMany(selectable.map((i) => toSelected(i, pl)));
-    else deselectMany(selectable.map((i) => i.item!.uri));
+    else deselectMany(selectable.map((i) => trackUri(i)!));
     renderTrackPane(ctx);
   });
 
@@ -387,15 +391,16 @@ function renderRow(row: SpotifyTrackItem, idx: number, pl: SpotifyPlaylist): str
       </tr>`;
   }
   const blocked = t.is_playable === false;
+  const uri = trackUri(row);
   const artists = (t.artists || []).map((a) => a.name).join(', ');
-  const canSelect = !blocked && !!t.uri;
-  const checked = canSelect && isSelected(t.uri) ? 'checked' : '';
+  const canSelect = !blocked && !!uri;
+  const checked = canSelect && uri && isSelected(uri) ? 'checked' : '';
   return `
-    <tr class="${blocked ? 'track-unavailable' : ''}" data-uri="${escapeHtml(t.uri || '')}" data-idx="${idx}">
+    <tr class="${blocked ? 'track-unavailable' : ''}" data-uri="${escapeHtml(uri || '')}" data-idx="${idx}">
       <td class="check-col">
         ${
           canSelect
-            ? `<input type="checkbox" class="row-check" data-uri="${escapeHtml(t.uri)}" ${checked} />`
+            ? `<input type="checkbox" class="row-check" data-uri="${escapeHtml(uri!)}" ${checked} />`
             : ''
         }
       </td>
@@ -420,12 +425,12 @@ function wireRowChecks(
     cb.addEventListener('click', (e) => {
       const uri = cb.dataset.uri!;
       const idx = Number((cb.closest('tr') as HTMLElement)?.dataset.idx ?? -1);
-      const row = filtered.find((r) => r.item?.uri === uri);
+      const row = filtered.find((r) => trackUri(r) === uri);
       if (!row?.item) return;
 
       if (e.shiftKey && ctx.lastCheckIndex >= 0 && idx >= 0) {
         const [a, b] = [ctx.lastCheckIndex, idx].sort((x, y) => x - y);
-        const range = filtered.slice(a, b + 1).filter((r) => r.item?.uri && r.item.is_playable !== false);
+        const range = filtered.slice(a, b + 1).filter((r) => trackUri(r) && r.item?.is_playable !== false);
         selectMany(range.map((r) => toSelected(r, pl)));
         renderTrackPane(ctx);
         return;
@@ -442,9 +447,9 @@ function wireRowChecks(
 }
 
 function updateSelectAllState(pane: Element, filtered: SpotifyTrackItem[]): void {
-  const selectable = filtered.filter((i) => i.item?.uri && i.item.is_playable !== false);
+  const selectable = filtered.filter((i) => trackUri(i) && i.item?.is_playable !== false);
   const allOn =
-    selectable.length > 0 && selectable.every((i) => isSelected(i.item!.uri));
+    selectable.length > 0 && selectable.every((i) => isSelected(trackUri(i)!));
   const el = pane.querySelector('#select-all') as HTMLInputElement | null;
   if (el) el.checked = allOn;
 }
@@ -568,9 +573,10 @@ async function bulkNewPlaylist(ctx: AppCtx): Promise<void> {
       name: result.name,
       public: result.isPublic,
     });
+    if (!created?.id) throw new Error('Spotify did not return a playlist id.');
     await addPlaylistItems(created.id, sel.map((s) => s.uri));
     clearSelection();
-    toast(`Created “${result.name}”`);
+    toastWithLink(`Created “${result.name}”`, playlistOpenUrl(created));
     ctx.playlists = await getAllPlaylists();
     renderPlaylistList(ctx);
   } catch (e) {
@@ -593,8 +599,12 @@ async function createFromFilter(ctx: AppCtx): Promise<void> {
       name: result.name,
       public: result.isPublic,
     });
+    if (!created?.id) throw new Error('Spotify did not return a playlist id.');
     await addPlaylistItems(created.id, uris);
-    toast(`Created “${result.name}” with ${uris.length} tracks`);
+    toastWithLink(
+      `Created “${result.name}” with ${uris.length} tracks`,
+      playlistOpenUrl(created)
+    );
     ctx.playlists = await getAllPlaylists();
     renderPlaylistList(ctx);
   } catch (e) {
@@ -627,25 +637,32 @@ async function runMerge(ctx: AppCtx): Promise<void> {
     if (!choice) return;
 
     let destId: string;
+    let openUrl: string | null = null;
     if (choice.mode === 'new') {
       const created = await createPlaylist({
         name: choice.name!,
-        public: choice.isPublic ?? false,
+        public: choice.isPublic ?? true,
         description: `Merged from ${sources.map((s) => s.name).join(', ')}`,
       });
       destId = created.id;
+      openUrl = playlistOpenUrl(created);
       await addPlaylistItems(destId, preview.unique);
     } else {
       destId = choice.playlistId!;
-      // add unique that aren't already there
       const existing = await getAllPlaylistItems(destId);
       const have = new Set(urisFromItems(existing.items));
       const toAdd = preview.unique.filter((u) => !have.has(u));
       await addPlaylistItems(destId, toAdd);
+      const dest = ctx.playlists.find((p) => p.id === destId);
+      if (dest) openUrl = playlistOpenUrl(dest);
     }
 
     ctx.mergeChecked.clear();
-    toast(`Merged ${preview.unique.length} unique tracks`);
+    if (openUrl) {
+      toastWithLink(`Merged ${preview.unique.length} unique tracks`, openUrl);
+    } else {
+      toast(`Merged ${preview.unique.length} unique tracks`);
+    }
     ctx.playlists = await getAllPlaylists();
     renderPlaylistList(ctx);
   } catch (e) {

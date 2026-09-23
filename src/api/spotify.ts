@@ -51,7 +51,11 @@ async function api<T>(path: string, init?: RequestInit, attempt = 0): Promise<T>
     return undefined as T;
   }
 
-  return (await res.json()) as T;
+  const text = await res.text();
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
 }
 
 export type SpotifyUser = {
@@ -80,7 +84,7 @@ export function playlistItemCount(p: SpotifyPlaylist): number | undefined {
 
 export type SpotifyTrackRef = {
   id: string;
-  uri: string;
+  uri?: string;
   name: string;
   duration_ms: number;
   type?: string;
@@ -97,14 +101,26 @@ export type SpotifyTrackItem = {
   item: SpotifyTrackRef | null;
 };
 
+/** Build a Spotify URI when the API omits `uri` but returns id + type. */
+export function ensureItemUri(t: SpotifyTrackRef | null | undefined): string | null {
+  if (!t) return null;
+  if (t.uri) return t.uri;
+  if (!t.id) return null;
+  const kind = t.type === 'episode' ? 'episode' : 'track';
+  return `spotify:${kind}:${t.id}`;
+}
+
 function mapPlaylistRow(row: {
   added_at?: string | null;
   item?: SpotifyTrackRef | null;
   track?: SpotifyTrackRef | null;
 }): SpotifyTrackItem {
+  const raw = row?.item ?? row?.track ?? null;
+  if (!raw) return { added_at: row?.added_at, item: null };
+  const uri = ensureItemUri(raw);
   return {
     added_at: row?.added_at,
-    item: row?.item ?? row?.track ?? null,
+    item: uri ? { ...raw, uri } : raw,
   };
 }
 
@@ -248,15 +264,49 @@ export async function createPlaylist(opts: {
   name: string;
   public?: boolean;
   description?: string;
-}): Promise<SpotifyPlaylist> {
-  return api<SpotifyPlaylist>('/me/playlists', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: opts.name,
-      public: opts.public ?? false,
-      description: opts.description ?? '',
-    }),
-  });
+}): Promise<SpotifyPlaylist & { uri?: string; external_urls?: { spotify?: string } }> {
+  const created = await api<SpotifyPlaylist & { uri?: string; external_urls?: { spotify?: string } }>(
+    '/me/playlists',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        name: opts.name,
+        // Spotify default is public; private playlists are easy to miss in the app UI
+        public: opts.public ?? true,
+        description: opts.description ?? '',
+      }),
+    }
+  );
+
+  // Feb 2026+: created playlists may not appear in Your Library until saved
+  const playlistUri = created.uri || (created.id ? `spotify:playlist:${created.id}` : null);
+  if (playlistUri) {
+    try {
+      await saveToLibrary([playlistUri]);
+    } catch {
+      /* still return created playlist; open URL can recover */
+    }
+  }
+
+  return created;
+}
+
+/**
+ * PUT /me/library — save playlists/tracks/etc. to Your Library
+ * https://developer.spotify.com/documentation/web-api/reference/save-library-items
+ */
+export async function saveToLibrary(uris: string[]): Promise<void> {
+  const list = [...new Set(uris.filter(Boolean))];
+  for (const batch of chunk(list, 40)) {
+    const qs = encodeURIComponent(batch.join(','));
+    await api(`/me/library?uris=${qs}`, { method: 'PUT' });
+  }
+}
+
+export function playlistOpenUrl(
+  pl: { id: string; external_urls?: { spotify?: string } }
+): string {
+  return pl.external_urls?.spotify || `https://open.spotify.com/playlist/${pl.id}`;
 }
 
 /** POST /playlists/{id}/items — max 100 uris per request */

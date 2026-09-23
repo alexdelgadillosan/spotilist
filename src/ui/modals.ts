@@ -121,8 +121,8 @@ export function newPlaylistModal(
           <input type="text" class="field" id="pl-name" value="${escapeHtml(opts.defaultName)}" />
         </label>
         <label class="check-row">
-          <input type="checkbox" id="pl-public" />
-          Public on my profile
+          <input type="checkbox" id="pl-public" checked />
+          Public (visible in Your Library &amp; profile)
         </label>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-act="cancel">Cancel</button>
@@ -180,8 +180,8 @@ export function mergeModal(
             <input type="text" class="field" id="merge-name" value="Merged playlist" />
           </label>
           <label class="check-row">
-            <input type="checkbox" id="merge-public" />
-            Public on my profile
+            <input type="checkbox" id="merge-public" checked />
+            Public (visible in Your Library &amp; profile)
           </label>
         </div>
         <div id="merge-existing" hidden>
@@ -268,4 +268,17 @@ export function toast(message: string, kind: 'ok' | 'error' = 'ok'): void {
     el.classList.remove('show');
     setTimeout(() => el.remove(), 250);
   }, 2800);
+}
+
+/** Success toast with optional “Open in Spotify” action. */
+export function toastWithLink(message: string, href: string, linkLabel = 'Open in Spotify'): void {
+  const el = document.createElement('div');
+  el.className = 'toast ok with-link';
+  el.innerHTML = `<span>${escapeHtml(message)}</span> <a href="${escapeHtml(href)}" target="_blank" rel="noopener">${escapeHtml(linkLabel)}</a>`;
+  document.body.appendChild(el);
+  requestAnimationFrame(() => el.classList.add('show'));
+  setTimeout(() => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 250);
+  }, 6000);
 }
