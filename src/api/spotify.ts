@@ -312,6 +312,17 @@ export async function createPlaylist(opts: {
 }
 
 /**
+ * PUT /playlists/{id} — rename / change details
+ * https://developer.spotify.com/documentation/web-api/reference/change-playlist-details
+ */
+export async function renamePlaylist(playlistId: string, name: string): Promise<void> {
+  await api(`/playlists/${encodeURIComponent(playlistId)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  });
+}
+
+/**
  * PUT /me/library — save playlists/tracks/etc. to Your Library
  * https://developer.spotify.com/documentation/web-api/reference/save-library-items
  */
@@ -333,6 +344,11 @@ export async function removeFromLibrary(uris: string[]): Promise<void> {
     const qs = encodeURIComponent(batch.join(','));
     await api(`/me/library?uris=${qs}`, { method: 'DELETE' });
   }
+}
+
+/** Unfollow / remove playlist from Your Library (Spotify has no hard delete). */
+export async function deletePlaylistFromLibrary(playlistId: string): Promise<void> {
+  await removeFromLibrary([`spotify:playlist:${playlistId}`]);
 }
 
 export function playlistOpenUrl(

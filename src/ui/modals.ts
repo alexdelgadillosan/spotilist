@@ -43,6 +43,59 @@ export function confirmModal(opts: ConfirmOpts): Promise<boolean> {
   });
 }
 
+export type PromptNameOpts = {
+  title: string;
+  label?: string;
+  defaultValue: string;
+  confirmLabel?: string;
+};
+
+export function promptNameModal(opts: PromptNameOpts): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal" role="dialog" aria-modal="true">
+        <h3>${escapeHtml(opts.title)}</h3>
+        <label class="field-label">${escapeHtml(opts.label || 'Name')}
+          <input type="text" class="field" id="prompt-name" value="${escapeHtml(opts.defaultValue)}" />
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-act="cancel">Cancel</button>
+          <button type="button" class="btn primary" data-act="ok">
+            ${escapeHtml(opts.confirmLabel || 'Save')}
+          </button>
+        </div>
+      </div>
+    `;
+    const close = (v: string | null) => {
+      overlay.remove();
+      resolve(v);
+    };
+    const input = () => overlay.querySelector('#prompt-name') as HTMLInputElement;
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(null);
+    });
+    overlay.querySelector('[data-act="cancel"]')?.addEventListener('click', () => close(null));
+    overlay.querySelector('[data-act="ok"]')?.addEventListener('click', () => {
+      const name = input().value.trim();
+      if (!name) return;
+      close(name);
+    });
+    input().addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const name = input().value.trim();
+        if (name) close(name);
+      }
+    });
+    document.body.appendChild(overlay);
+    const el = input();
+    el.focus();
+    el.select();
+  });
+}
+
 export type PromptPlaylistOpts = {
   title: string;
   playlists: { id: string; name: string }[];

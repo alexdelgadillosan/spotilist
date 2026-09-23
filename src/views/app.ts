@@ -1,6 +1,7 @@
 import {
   addPlaylistItems,
   createPlaylist,
+  deletePlaylistFromLibrary,
   getAllLikedSongs,
   getAllPlaylistItems,
   getAllPlaylists,
@@ -13,6 +14,7 @@ import {
   playlistOpenUrl,
   removeFromLibrary,
   removePlaylistItems,
+  renamePlaylist,
   replacePlaylistItems,
   type SpotifyPlaylist,
   type SpotifyTrackItem,
@@ -46,6 +48,7 @@ import {
   mergeModal,
   newPlaylistModal,
   pickPlaylistModal,
+  promptNameModal,
   toast,
   toastWithLink,
 } from '../ui/modals';
@@ -56,8 +59,12 @@ function formatDuration(ms: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
+const ICON_PENCIL = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1.003 1.003 0 0 0 0-1.42l-2.34-2.34a1.003 1.003 0 0 0-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z"/></svg>`;
+const ICON_TRASH = `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>`;
+
 type AppCtx = {
   root: HTMLElement;
+  userId: string;
   playlists: SpotifyPlaylist[];
   activeId: string | null;
   activeItems: SpotifyTrackItem[];
@@ -142,6 +149,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
 
   const ctx: AppCtx = {
     root,
+    userId: user.id,
     playlists,
     activeId: null,
     activeItems: [],
@@ -349,9 +357,26 @@ function renderTrackPane(ctx: AppCtx): void {
   );
 
   const f = ctx.filter;
+  const liked = isLikedSongs(pl);
+  const owns = !liked && pl.owner?.id === ctx.userId;
+  // Followed playlists: trash only. Owned: rename + delete. Liked Songs: neither.
+  const showRename = owns;
+  const showDelete = !liked;
+  const actions = [
+    showRename
+      ? `<button type="button" class="icon-btn rename" id="rename-playlist" title="Rename playlist" aria-label="Rename playlist">${ICON_PENCIL}</button>`
+      : '',
+    showDelete
+      ? `<button type="button" class="icon-btn delete" id="delete-playlist" title="Remove from library" aria-label="Delete playlist">${ICON_TRASH}</button>`
+      : '',
+  ].join('');
+
   pane.innerHTML = `
     <div class="track-header">
-      <h2>${escapeHtml(pl.name || 'Playlist')}</h2>
+      <div class="track-title-row">
+        <h2>${escapeHtml(pl.name || 'Playlist')}</h2>
+        ${actions ? `<div class="track-title-actions">${actions}</div>` : ''}
+      </div>
       <p class="muted">
         ${ctx.activeItems.length} items
         · ${available.length} available
@@ -388,6 +413,9 @@ function renderTrackPane(ctx: AppCtx): void {
       </tbody>
     </table>
   `;
+
+  pane.querySelector('#rename-playlist')?.addEventListener('click', () => void runRenamePlaylist(ctx));
+  pane.querySelector('#delete-playlist')?.addEventListener('click', () => void runDeletePlaylist(ctx));
 
   const applyFiltersFromDom = () => {
     ctx.filter = {
@@ -868,6 +896,57 @@ async function runImport(ctx: AppCtx, file: File): Promise<void> {
     );
     await refreshPlaylistsKeepingLiked(ctx);
     renderPlaylistList(ctx);
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function runRenamePlaylist(ctx: AppCtx): Promise<void> {
+  const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
+  if (!pl || isLikedSongs(pl) || pl.owner?.id !== ctx.userId) return;
+
+  const next = await promptNameModal({
+    title: 'Rename playlist',
+    defaultValue: pl.name || '',
+    confirmLabel: 'Save',
+  });
+  if (!next || next === pl.name) return;
+
+  try {
+    await renamePlaylist(pl.id, next);
+    pl.name = next;
+    renderPlaylistList(ctx);
+    renderTrackPane(ctx);
+    toast(`Renamed to “${next}”`);
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function runDeletePlaylist(ctx: AppCtx): Promise<void> {
+  const pl = ctx.playlists.find((p) => p.id === ctx.activeId);
+  if (!pl || isLikedSongs(pl)) return;
+
+  const ok = await confirmModal({
+    title: 'Remove playlist?',
+    body: `Remove <strong>${escapeHtml(pl.name || 'playlist')}</strong> from your library? Spotify unfollows it — others who follow it keep access.`,
+    confirmLabel: 'Remove',
+    danger: true,
+  });
+  if (!ok) return;
+
+  try {
+    await deletePlaylistFromLibrary(pl.id);
+    ctx.playlists = ctx.playlists.filter((p) => p.id !== pl.id);
+    ctx.mergeChecked.delete(pl.id);
+    ctx.activeId = null;
+    ctx.activeItems = [];
+    clearSelection();
+    renderPlaylistList(ctx);
+    updateSidebarActions(ctx);
+    const pane = ctx.root.querySelector('#track-pane')!;
+    pane.innerHTML = `<p class="muted">Select a playlist to view tracks.</p>`;
+    toast(`Removed “${pl.name}” from your library`);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
   }

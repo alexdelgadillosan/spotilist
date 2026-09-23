@@ -345,8 +345,65 @@ body {
   max-height: calc(100vh - 64px);
 }
 
-.track-header h2 {
-  margin: 0 0 0.25rem;
+.track-header .muted {
+  margin: 0.35rem 0 0;
+}
+
+.track-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.5rem;
+}
+
+.track-title-row h2 {
+  margin: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.track-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.icon-btn:hover {
+  background: var(--elevated);
+}
+
+.icon-btn.rename {
+  color: #4c8bf5;
+}
+
+.icon-btn.rename:hover {
+  color: #6ba3ff;
+}
+
+.icon-btn.delete {
+  color: #e91429;
+}
+
+.icon-btn.delete:hover {
+  color: #ff4d5e;
 }
 
 .track-table {
