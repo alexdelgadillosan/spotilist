@@ -8,6 +8,7 @@ Bulk-edit Spotify playlists — merge, dedupe, multi-select ops, and filter-base
 
 - **Connect Spotify** via OAuth **Authorization Code + PKCE** (safe for GitHub Pages)
 - Search and browse your playlists (full item load with pagination)
+- **Liked Songs** as a virtual library source (browse, multi-select, merge from, unlike)
 - Multi-select tracks — bulk **add**, **move**, **delete**, or **new playlist**
 - **Merge** playlists with dry-run preview + auto-dedupe
 - **Dedupe** the active playlist

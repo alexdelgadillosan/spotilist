@@ -75,7 +75,27 @@ export type SpotifyPlaylist = {
   owner?: { display_name: string | null; id: string };
   collaborative?: boolean;
   public?: boolean | null;
+  /** Virtual Liked Songs collection (not a real playlist id). */
+  isLikedSongs?: boolean;
 };
+
+/** Sentinel id for the virtual Liked Songs row in the UI. */
+export const LIKED_SONGS_ID = '__liked_songs__';
+
+export function isLikedSongs(pl: { id: string; isLikedSongs?: boolean } | string): boolean {
+  const id = typeof pl === 'string' ? pl : pl.id;
+  return id === LIKED_SONGS_ID || (typeof pl !== 'string' && !!pl.isLikedSongs);
+}
+
+export function makeLikedSongsPlaylist(total = 0): SpotifyPlaylist {
+  return {
+    id: LIKED_SONGS_ID,
+    name: 'Liked Songs',
+    isLikedSongs: true,
+    items: { total },
+    public: false,
+  };
+}
 
 export function playlistItemCount(p: SpotifyPlaylist): number | undefined {
   const n = p.items?.total ?? p.tracks?.total;
@@ -303,10 +323,82 @@ export async function saveToLibrary(uris: string[]): Promise<void> {
   }
 }
 
+/**
+ * DELETE /me/library — unlike / remove from library
+ * https://developer.spotify.com/documentation/web-api/reference/remove-library-items
+ */
+export async function removeFromLibrary(uris: string[]): Promise<void> {
+  const list = [...new Set(uris.filter(Boolean))];
+  for (const batch of chunk(list, 40)) {
+    const qs = encodeURIComponent(batch.join(','));
+    await api(`/me/library?uris=${qs}`, { method: 'DELETE' });
+  }
+}
+
 export function playlistOpenUrl(
-  pl: { id: string; external_urls?: { spotify?: string } }
+  pl: { id: string; external_urls?: { spotify?: string }; isLikedSongs?: boolean }
 ): string {
+  if (isLikedSongs(pl)) return 'https://open.spotify.com/collection/tracks';
   return pl.external_urls?.spotify || `https://open.spotify.com/playlist/${pl.id}`;
+}
+
+/**
+ * GET /me/tracks — Liked Songs (Your Music)
+ * https://developer.spotify.com/documentation/web-api/reference/get-users-saved-tracks
+ */
+export async function getLikedSongsPage(
+  limit = 50,
+  offset = 0
+): Promise<{ items: SpotifyTrackItem[]; total: number; next: string | null }> {
+  const capped = Math.min(Math.max(limit, 1), 50);
+  const page = await api<{
+    items?: Array<{
+      added_at?: string | null;
+      track?: SpotifyTrackRef | null;
+    }>;
+    total?: number;
+    next?: string | null;
+  }>(`/me/tracks?limit=${capped}&offset=${offset}&market=from_token`);
+
+  const items: SpotifyTrackItem[] = (page?.items || []).map((row) => {
+    const raw = row?.track ?? null;
+    if (!raw) return { added_at: row?.added_at, item: null };
+    const uri = ensureItemUri(raw);
+    return { added_at: row?.added_at, item: uri ? { ...raw, uri } : raw };
+  });
+
+  return {
+    items,
+    total: typeof page?.total === 'number' ? page.total : items.length,
+    next: page?.next ?? null,
+  };
+}
+
+export async function getLikedSongsTotal(): Promise<number> {
+  const page = await getLikedSongsPage(1, 0);
+  return page.total;
+}
+
+export async function getAllLikedSongs(
+  onProgress?: (loaded: number, total: number) => void
+): Promise<{ items: SpotifyTrackItem[]; total: number }> {
+  const all: SpotifyTrackItem[] = [];
+  let offset = 0;
+  let total = Infinity;
+
+  while (offset < total) {
+    const page = await getLikedSongsPage(50, offset);
+    all.push(...page.items);
+    total = page.total;
+    offset += page.items.length;
+    onProgress?.(all.length, total);
+    if (!page.items.length || !page.next) break;
+  }
+
+  return {
+    items: all,
+    total: typeof total === 'number' && total !== Infinity ? total : all.length,
+  };
 }
 
 /** POST /playlists/{id}/items — max 100 uris per request */

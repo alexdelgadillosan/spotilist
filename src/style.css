@@ -302,9 +302,22 @@ body {
   flex-shrink: 0;
 }
 
-.playlist-art.placeholder {
-  display: inline-block;
-  background: #333;
+.playlist-art.liked-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #450af5, #8e8ee5);
+}
+
+.playlist-art.liked-art::after {
+  content: '♥';
+  color: #fff;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.playlist-row.liked-songs .playlist-name {
+  font-weight: 700;
 }
 
 .playlist-meta {

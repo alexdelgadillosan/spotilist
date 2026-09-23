@@ -1,12 +1,17 @@
 import {
   addPlaylistItems,
   createPlaylist,
+  getAllLikedSongs,
   getAllPlaylistItems,
   getAllPlaylists,
+  getLikedSongsTotal,
   getMe,
   getPlaylistMeta,
+  isLikedSongs,
+  makeLikedSongsPlaylist,
   playlistItemCount,
   playlistOpenUrl,
+  removeFromLibrary,
   removePlaylistItems,
   replacePlaylistItems,
   type SpotifyPlaylist,
@@ -106,8 +111,16 @@ export async function renderApp(root: HTMLElement): Promise<void> {
 
   let user: SpotifyUser;
   let playlists: SpotifyPlaylist[];
+  let likedTotal = 0;
   try {
-    [user, playlists] = await Promise.all([getMe(), getAllPlaylists()]);
+    const [me, pls, liked] = await Promise.all([
+      getMe(),
+      getAllPlaylists(),
+      getLikedSongsTotal().catch(() => 0),
+    ]);
+    user = me;
+    likedTotal = liked;
+    playlists = [makeLikedSongsPlaylist(likedTotal), ...pls];
   } catch (e) {
     root.querySelector('#playlist-list')!.innerHTML = `<p class="banner error">${
       e instanceof Error ? e.message : String(e)
@@ -173,6 +186,22 @@ function wireSidebar(ctx: AppCtx): void {
   ctx.root.querySelector('#dedupe-btn')?.addEventListener('click', () => void runDedupe(ctx));
 }
 
+function realPlaylists(ctx: AppCtx): SpotifyPlaylist[] {
+  return ctx.playlists.filter((p) => !isLikedSongs(p));
+}
+
+async function refreshPlaylistsKeepingLiked(ctx: AppCtx): Promise<void> {
+  const liked = ctx.playlists.find((p) => isLikedSongs(p));
+  const pls = await getAllPlaylists();
+  let likedTotal = liked ? playlistItemCount(liked) ?? 0 : 0;
+  try {
+    likedTotal = await getLikedSongsTotal();
+  } catch {
+    /* keep previous */
+  }
+  ctx.playlists = [makeLikedSongsPlaylist(likedTotal), ...pls];
+}
+
 function renderPlaylistList(ctx: AppCtx): void {
   const listEl = ctx.root.querySelector('#playlist-list')!;
   const q = (
@@ -193,21 +222,24 @@ function renderPlaylistList(ctx: AppCtx): void {
 
   listEl.innerHTML = filtered
     .map((p) => {
+      const liked = isLikedSongs(p);
       const img = p.images?.[0]?.url;
       const total = playlistItemCount(p);
       const countLabel = typeof total === 'number' ? `${total} tracks` : '… tracks';
       const active = p.id === ctx.activeId ? 'active' : '';
       const checked = ctx.mergeChecked.has(p.id) ? 'checked' : '';
       return `
-      <div class="playlist-row ${active}" data-id="${p.id}">
-        <label class="merge-check" title="Select for merge">
+      <div class="playlist-row ${active} ${liked ? 'liked-songs' : ''}" data-id="${p.id}">
+        <label class="merge-check" title="${liked ? 'Include Liked Songs in merge' : 'Select for merge'}">
           <input type="checkbox" data-merge="${p.id}" ${checked} />
         </label>
         <button type="button" class="playlist-item" data-id="${p.id}">
           ${
-            img
-              ? `<img src="${img}" alt="" class="playlist-art" />`
-              : `<span class="playlist-art placeholder"></span>`
+            liked
+              ? `<span class="playlist-art liked-art" aria-hidden="true"></span>`
+              : img
+                ? `<img src="${img}" alt="" class="playlist-art" />`
+                : `<span class="playlist-art placeholder"></span>`
           }
           <span class="playlist-meta">
             <span class="playlist-name">${escapeHtml(p.name || 'Untitled')}</span>
@@ -246,7 +278,8 @@ function updateSidebarActions(ctx: AppCtx): void {
   const mergeBtn = ctx.root.querySelector('#merge-btn') as HTMLButtonElement;
   const dedupeBtn = ctx.root.querySelector('#dedupe-btn') as HTMLButtonElement;
   mergeBtn.disabled = ctx.mergeChecked.size < 2;
-  dedupeBtn.disabled = !ctx.activeId;
+  // Dedupe only applies to real playlists (Liked Songs isn't editable that way)
+  dedupeBtn.disabled = !ctx.activeId || isLikedSongs(ctx.activeId);
 }
 
 async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void> {
@@ -255,7 +288,12 @@ async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void>
   updateSidebarActions(ctx);
 
   try {
-    const { items, total } = await getAllPlaylistItems(playlist.id, (loaded, t) => {
+    const fetcher = isLikedSongs(playlist)
+      ? getAllLikedSongs
+      : (onProgress?: (loaded: number, total: number) => void) =>
+          getAllPlaylistItems(playlist.id, onProgress);
+
+    const { items, total } = await fetcher((loaded, t) => {
       const status = pane.querySelector('#load-status');
       if (status) status.textContent = `Loading ${loaded}/${t}…`;
     });
@@ -481,13 +519,24 @@ function renderBulkBar(ctx: AppCtx): void {
   bar.querySelector('[data-bulk="delete"]')?.addEventListener('click', () => void bulkDelete(ctx));
 }
 
+async function removeFromSources(
+  bySource: Map<string, string[]>
+): Promise<void> {
+  for (const [sourceId, sourceUris] of bySource) {
+    if (isLikedSongs(sourceId)) {
+      await removeFromLibrary(sourceUris);
+    } else {
+      await removePlaylistItems(sourceId, sourceUris);
+    }
+  }
+}
+
 async function bulkAdd(ctx: AppCtx, move: boolean): Promise<void> {
   const sel = getSelection();
   if (!sel.length) return;
   const destId = await pickPlaylistModal({
     title: move ? 'Move to playlist' : 'Add to playlist',
-    playlists: ctx.playlists.map((p) => ({ id: p.id, name: p.name })),
-    excludeIds: move ? [] : undefined,
+    playlists: realPlaylists(ctx).map((p) => ({ id: p.id, name: p.name })),
   });
   if (!destId) return;
 
@@ -505,14 +554,12 @@ async function bulkAdd(ctx: AppCtx, move: boolean): Promise<void> {
     if (move) {
       const bySource = new Map<string, string[]>();
       for (const s of sel) {
+        if (s.sourcePlaylistId === destId) continue;
         const list = bySource.get(s.sourcePlaylistId) || [];
         list.push(s.uri);
         bySource.set(s.sourcePlaylistId, list);
       }
-      for (const [sourceId, sourceUris] of bySource) {
-        if (sourceId === destId) continue;
-        await removePlaylistItems(sourceId, sourceUris);
-      }
+      await removeFromSources(bySource);
     }
     clearSelection();
     toast(move ? `Moved ${uris.length} tracks` : `Added ${uris.length} tracks`);
@@ -529,10 +576,13 @@ async function bulkAdd(ctx: AppCtx, move: boolean): Promise<void> {
 async function bulkDelete(ctx: AppCtx): Promise<void> {
   const sel = getSelection();
   if (!sel.length) return;
+  const fromLiked = sel.every((s) => isLikedSongs(s.sourcePlaylistId));
   const ok = await confirmModal({
-    title: 'Delete tracks?',
-    body: `Remove <strong>${sel.length}</strong> track${sel.length === 1 ? '' : 's'} from their playlists? This cannot be undone from Spotilist.`,
-    confirmLabel: 'Delete',
+    title: fromLiked ? 'Unlike tracks?' : 'Delete tracks?',
+    body: fromLiked
+      ? `Remove <strong>${sel.length}</strong> track${sel.length === 1 ? '' : 's'} from <strong>Liked Songs</strong>?`
+      : `Remove <strong>${sel.length}</strong> track${sel.length === 1 ? '' : 's'} from their playlists? This cannot be undone from Spotilist.`,
+    confirmLabel: fromLiked ? 'Unlike' : 'Delete',
     danger: true,
   });
   if (!ok) return;
@@ -544,11 +594,9 @@ async function bulkDelete(ctx: AppCtx): Promise<void> {
       list.push(s.uri);
       bySource.set(s.sourcePlaylistId, list);
     }
-    for (const [sourceId, uris] of bySource) {
-      await removePlaylistItems(sourceId, uris);
-    }
+    await removeFromSources(bySource);
     clearSelection();
-    toast(`Removed ${sel.length} tracks`);
+    toast(fromLiked ? `Unliked ${sel.length} tracks` : `Removed ${sel.length} tracks`);
     if (ctx.activeId) {
       const pl = ctx.playlists.find((p) => p.id === ctx.activeId)!;
       await loadTracks(ctx, pl);
@@ -577,7 +625,7 @@ async function bulkNewPlaylist(ctx: AppCtx): Promise<void> {
     await addPlaylistItems(created.id, sel.map((s) => s.uri));
     clearSelection();
     toastWithLink(`Created “${result.name}”`, playlistOpenUrl(created));
-    ctx.playlists = await getAllPlaylists();
+    await refreshPlaylistsKeepingLiked(ctx);
     renderPlaylistList(ctx);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
@@ -605,7 +653,7 @@ async function createFromFilter(ctx: AppCtx): Promise<void> {
       `Created “${result.name}” with ${uris.length} tracks`,
       playlistOpenUrl(created)
     );
-    ctx.playlists = await getAllPlaylists();
+    await refreshPlaylistsKeepingLiked(ctx);
     renderPlaylistList(ctx);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
@@ -623,7 +671,9 @@ async function runMerge(ctx: AppCtx): Promise<void> {
     toast('Loading playlists to merge…');
     const lists: string[][] = [];
     for (const pl of sources) {
-      const { items } = await getAllPlaylistItems(pl.id);
+      const { items } = isLikedSongs(pl)
+        ? await getAllLikedSongs()
+        : await getAllPlaylistItems(pl.id);
       lists.push(urisFromItems(items));
     }
     const preview = mergePreview(lists);
@@ -632,7 +682,7 @@ async function runMerge(ctx: AppCtx): Promise<void> {
       totalRaw: preview.totalRaw,
       uniqueCount: preview.unique.length,
       duplicateCount: preview.duplicateCount,
-      playlists: ctx.playlists.map((p) => ({ id: p.id, name: p.name })),
+      playlists: realPlaylists(ctx).map((p) => ({ id: p.id, name: p.name })),
     });
     if (!choice) return;
 
@@ -649,6 +699,9 @@ async function runMerge(ctx: AppCtx): Promise<void> {
       await addPlaylistItems(destId, preview.unique);
     } else {
       destId = choice.playlistId!;
+      if (isLikedSongs(destId)) {
+        throw new Error('Cannot merge into Liked Songs. Pick a playlist or create a new one.');
+      }
       const existing = await getAllPlaylistItems(destId);
       const have = new Set(urisFromItems(existing.items));
       const toAdd = preview.unique.filter((u) => !have.has(u));
@@ -663,7 +716,7 @@ async function runMerge(ctx: AppCtx): Promise<void> {
     } else {
       toast(`Merged ${preview.unique.length} unique tracks`);
     }
-    ctx.playlists = await getAllPlaylists();
+    await refreshPlaylistsKeepingLiked(ctx);
     renderPlaylistList(ctx);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
@@ -671,7 +724,7 @@ async function runMerge(ctx: AppCtx): Promise<void> {
 }
 
 async function runDedupe(ctx: AppCtx): Promise<void> {
-  if (!ctx.activeId) return;
+  if (!ctx.activeId || isLikedSongs(ctx.activeId)) return;
   const pl = ctx.playlists.find((p) => p.id === ctx.activeId)!;
   const uris = urisFromItems(ctx.activeItems);
   const { unique, duplicateCount } = dedupeUris(uris);
@@ -701,8 +754,9 @@ async function refreshPlaylistMeta(ctx: AppCtx, ids: string[]): Promise<void> {
     const pl = ctx.playlists.find((p) => p.id === id);
     if (!pl) continue;
     try {
-      const meta = await getPlaylistMeta(id);
-      const total = meta.items?.total ?? 0;
+      const total = isLikedSongs(id)
+        ? await getLikedSongsTotal()
+        : ((await getPlaylistMeta(id)).items?.total ?? 0);
       pl.items = { ...(pl.items || {}), total };
       const el = ctx.root.querySelector(`[data-count-for="${id}"]`);
       if (el) el.textContent = `${total} tracks`;
