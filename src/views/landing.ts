@@ -176,7 +176,7 @@ export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
     </section>
 
     <footer class="foot">
-      <span>Created with ❤️ by <a href="https://www.linkedin.com/in/alejandrodelgadillos/" target="_blank" rel="noopener">Alex Delgado</a></span>
+      <span>Created with ❤️ by <a href="https://www.linkedin.com/in/alejandrodelgadillos/" target="_blank" rel="noopener">Alex Delgadillo</a></span>
     </footer>
   </div>
   `;
