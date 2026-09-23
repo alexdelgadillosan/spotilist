@@ -553,7 +553,7 @@ function renderBulkBar(ctx: AppCtx): void {
   bar.hidden = false;
   bar.innerHTML = `
     <span class="bulk-count">${n} selected</span>
-    <button type="button" class="btn primary small" data-bulk="add">Add to…</button>
+    <button type="button" class="btn primary small" data-bulk="copy">Copy to…</button>
     <button type="button" class="ghost-btn small" data-bulk="move">Move to…</button>
     <button type="button" class="ghost-btn small" data-bulk="new">New playlist</button>
     <button type="button" class="ghost-btn small danger-text" data-bulk="delete">Delete</button>
@@ -563,7 +563,7 @@ function renderBulkBar(ctx: AppCtx): void {
     clearSelection();
     if (ctx.activeId) renderTrackPane(ctx);
   });
-  bar.querySelector('[data-bulk="add"]')?.addEventListener('click', () => void bulkAdd(ctx, false));
+  bar.querySelector('[data-bulk="copy"]')?.addEventListener('click', () => void bulkAdd(ctx, false));
   bar.querySelector('[data-bulk="move"]')?.addEventListener('click', () => void bulkAdd(ctx, true));
   bar.querySelector('[data-bulk="new"]')?.addEventListener('click', () => void bulkNewPlaylist(ctx));
   bar.querySelector('[data-bulk="delete"]')?.addEventListener('click', () => void bulkDelete(ctx));
@@ -585,16 +585,16 @@ async function bulkAdd(ctx: AppCtx, move: boolean): Promise<void> {
   const sel = getSelection();
   if (!sel.length) return;
   const destId = await pickPlaylistModal({
-    title: move ? 'Move to playlist' : 'Add to playlist',
+    title: move ? 'Move to playlist' : 'Copy to playlist',
     playlists: realPlaylists(ctx).map((p) => ({ id: p.id, name: p.name })),
   });
   if (!destId) return;
 
   const dest = ctx.playlists.find((p) => p.id === destId);
   const ok = await confirmModal({
-    title: move ? 'Move tracks?' : 'Add tracks?',
-    body: `${move ? 'Move' : 'Add'} <strong>${sel.length}</strong> track${sel.length === 1 ? '' : 's'} to <strong>${escapeHtml(dest?.name || 'playlist')}</strong>?`,
-    confirmLabel: move ? 'Move' : 'Add',
+    title: move ? 'Move tracks?' : 'Copy tracks?',
+    body: `${move ? 'Move' : 'Copy'} <strong>${sel.length}</strong> track${sel.length === 1 ? '' : 's'} to <strong>${escapeHtml(dest?.name || 'playlist')}</strong>?`,
+    confirmLabel: move ? 'Move' : 'Copy',
   });
   if (!ok) return;
 
@@ -612,7 +612,7 @@ async function bulkAdd(ctx: AppCtx, move: boolean): Promise<void> {
       await removeFromSources(bySource);
     }
     clearSelection();
-    toast(move ? `Moved ${uris.length} tracks` : `Added ${uris.length} tracks`);
+    toast(move ? `Moved ${uris.length} tracks` : `Copied ${uris.length} tracks`);
     if (ctx.activeId) {
       const pl = ctx.playlists.find((p) => p.id === ctx.activeId)!;
       await loadTracks(ctx, pl);

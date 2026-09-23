@@ -2,7 +2,7 @@ import { getClientId, startLogin } from '../auth/spotify-auth';
 
 const features = [
   'Browse Liked Songs and all your playlists',
-  'Multi-select tracks — add, move, or delete in bulk',
+  'Multi-select tracks — copy, move, or delete in bulk',
   'Merge playlists with auto-dedupe',
   'Filter by artist, album, duration, date, or explicit',
   'Create new playlists from a selection or filter',
