@@ -99,7 +99,18 @@ export function renderLanding(root: HTMLElement, opts?: { error?: string }) {
         <span class="logo" aria-hidden="true"></span>
         <span class="name">Spotilist</span>
       </div>
-      <a class="ghost" href="https://github.com/alexdelgadillosan/spotilist" target="_blank" rel="noopener">GitHub</a>
+      <div class="top-links">
+        <a
+          class="bmc-btn"
+          href="https://buymeacoffee.com/alexdelgadillo"
+          target="_blank"
+          rel="noopener"
+        >
+          <span class="bmc-cup" aria-hidden="true">☕</span>
+          Buy me a coffee
+        </a>
+        <a class="ghost" href="https://github.com/alexdelgadillosan/spotilist" target="_blank" rel="noopener">GitHub</a>
+      </div>
     </header>
 
     <main class="hero">
