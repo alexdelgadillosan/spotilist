@@ -102,6 +102,7 @@ export async function renderApp(root: HTMLElement): Promise<void> {
             <button type="button" class="ghost-btn small" id="dedupe-btn" disabled>Dedupe</button>
             <button type="button" class="ghost-btn small" id="export-btn" disabled>Export</button>
             <button type="button" class="ghost-btn small" id="import-btn">Import</button>
+            <button type="button" class="ghost-btn small danger-text" id="delete-playlists-btn" disabled>Delete</button>
             <input
               type="file"
               id="import-file"
@@ -203,6 +204,7 @@ function wireSidebar(ctx: AppCtx): void {
   ctx.root.querySelector('#merge-btn')?.addEventListener('click', () => void runMerge(ctx));
   ctx.root.querySelector('#dedupe-btn')?.addEventListener('click', () => void runDedupe(ctx));
   ctx.root.querySelector('#export-btn')?.addEventListener('click', () => void runExport(ctx));
+  ctx.root.querySelector('#delete-playlists-btn')?.addEventListener('click', () => void runDeletePlaylists(ctx));
   ctx.root.querySelector('#import-btn')?.addEventListener('click', () => {
     (ctx.root.querySelector('#import-file') as HTMLInputElement)?.click();
   });
@@ -302,15 +304,23 @@ function renderPlaylistList(ctx: AppCtx): void {
   updateSidebarActions(ctx);
 }
 
+function checkedDeletablePlaylists(ctx: AppCtx): SpotifyPlaylist[] {
+  return [...ctx.mergeChecked]
+    .map((id) => ctx.playlists.find((p) => p.id === id))
+    .filter((p): p is SpotifyPlaylist => !!p && !isLikedSongs(p));
+}
+
 function updateSidebarActions(ctx: AppCtx): void {
   const mergeBtn = ctx.root.querySelector('#merge-btn') as HTMLButtonElement;
   const dedupeBtn = ctx.root.querySelector('#dedupe-btn') as HTMLButtonElement;
   const exportBtn = ctx.root.querySelector('#export-btn') as HTMLButtonElement;
+  const deleteBtn = ctx.root.querySelector('#delete-playlists-btn') as HTMLButtonElement;
   mergeBtn.disabled = ctx.mergeChecked.size < 2;
   // Dedupe only applies to real playlists (Liked Songs isn't editable that way)
   dedupeBtn.disabled = !ctx.activeId || isLikedSongs(ctx.activeId);
   exportBtn.disabled =
     ctx.mergeChecked.size < 1 && (!ctx.activeId || ctx.activeItems.length === 0);
+  deleteBtn.disabled = checkedDeletablePlaylists(ctx).length < 1;
 }
 
 async function loadTracks(ctx: AppCtx, playlist: SpotifyPlaylist): Promise<void> {
@@ -986,20 +996,65 @@ async function runDeletePlaylist(ctx: AppCtx): Promise<void> {
   if (!ok) return;
 
   try {
-    await deletePlaylistFromLibrary(pl.id);
-    ctx.playlists = ctx.playlists.filter((p) => p.id !== pl.id);
-    ctx.mergeChecked.delete(pl.id);
-    ctx.activeId = null;
-    ctx.activeItems = [];
-    clearSelection();
-    renderPlaylistList(ctx);
-    updateSidebarActions(ctx);
-    const pane = ctx.root.querySelector('#track-pane')!;
-    pane.innerHTML = `<p class="muted">Select a playlist to view tracks.</p>`;
+    await removePlaylistsFromLibrary(ctx, [pl]);
     toast(`Removed “${pl.name}” from your library`);
   } catch (e) {
     toast(e instanceof Error ? e.message : String(e), 'error');
   }
+}
+
+async function runDeletePlaylists(ctx: AppCtx): Promise<void> {
+  const targets = checkedDeletablePlaylists(ctx);
+  if (!targets.length) {
+    toast('Select playlists to delete (Liked Songs cannot be deleted this way)', 'error');
+    return;
+  }
+
+  const n = targets.length;
+  const names =
+    n <= 5
+      ? targets.map((p) => escapeHtml(p.name || 'Untitled')).join(', ')
+      : `${escapeHtml(targets[0].name || 'Untitled')} and ${n - 1} more`;
+
+  const ok = await confirmModal({
+    title: n === 1 ? 'Remove playlist?' : `Remove ${n} playlists?`,
+    body: `Remove <strong>${names}</strong> from your library? Spotify unfollows them — others who follow keep access.`,
+    confirmLabel: 'Delete',
+    danger: true,
+  });
+  if (!ok) return;
+
+  try {
+    await removePlaylistsFromLibrary(ctx, targets);
+    toast(
+      n === 1
+        ? `Removed “${targets[0].name}” from your library`
+        : `Removed ${n} playlists from your library`
+    );
+  } catch (e) {
+    toast(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+async function removePlaylistsFromLibrary(
+  ctx: AppCtx,
+  playlists: SpotifyPlaylist[]
+): Promise<void> {
+  const ids = new Set(playlists.map((p) => p.id));
+  for (const pl of playlists) {
+    await deletePlaylistFromLibrary(pl.id);
+    ctx.mergeChecked.delete(pl.id);
+  }
+  ctx.playlists = ctx.playlists.filter((p) => !ids.has(p.id));
+  if (ctx.activeId && ids.has(ctx.activeId)) {
+    ctx.activeId = null;
+    ctx.activeItems = [];
+    clearSelection();
+    const pane = ctx.root.querySelector('#track-pane')!;
+    pane.innerHTML = `<p class="muted">Select a playlist to view tracks.</p>`;
+  }
+  renderPlaylistList(ctx);
+  updateSidebarActions(ctx);
 }
 
 async function refreshPlaylistMeta(ctx: AppCtx, ids: string[]): Promise<void> {
